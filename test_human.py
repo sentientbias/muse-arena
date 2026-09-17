@@ -132,6 +132,58 @@ def main():
     assert a.house_bot_reply(gid) is None
     print("stake + bot-reply OK")
 
+    # ---- all 5 kinds: challenge -> stake -> move -> bot reply ----
+    a, _ = fresh()
+    s = a.human_session(WALLET, "KnightOwl")
+    human = a.auth(s["token"])
+    fake_receipt(a, WALLET)
+    tx_n = [0]
+    def stake_tx():
+        tx_n[0] += 1
+        return "0x%064x" % (1000 + tx_n[0])
+    first_moves = {
+        "checkers": lambda g: chk_legal_moves(g["board"], 0)[0],
+        "connect4": lambda g: {"column": 3},
+        "tictactoe": lambda g: {"cell": 4},
+        "poker": lambda g: ({"action": "call", "amount":
+                             [m for m in g["legal_moves"]
+                              if m["action"] == "call"][0]["amount"]}
+                            if any(m["action"] == "call" for m in g["legal_moves"])
+                            else {"action": "check"}),
+        "blackjack": lambda g: {"action": "stand"},
+    }
+    for kind in ("checkers", "connect4", "tictactoe", "poker", "blackjack"):
+        g = a.human_challenge(human, "Zuckbot", kind)
+        assert g["kind"] == kind and g["status"] == "open", kind
+        assert g["turn"] == "KnightOwl", (kind, g["turn"])
+        # house counter-stake row present for every kind
+        rows = a._rows("SELECT payer, status FROM stakes WHERE game_id=?",
+                       (g["id"],))
+        assert len(rows) == 1 and dict(rows[0])["payer"] == "house", kind
+        # move blocked until staked, for every kind
+        expect_api(lambda g=g: a.make_move(human, g["id"],
+                                           first_moves[kind](g)), 402)
+        a.human_stake(human, g["id"], stake_tx())
+        mv = first_moves[kind](a.board_game_state(g["id"]))
+        d = a.make_move(human, g["id"], mv)
+        assert d["moved"], kind
+        a.house_bot_reply(g["id"])
+        st = a.board_game_state(g["id"])
+        assert st["status"] in ("open", "finished"), (kind, st["status"])
+        if kind == "poker":
+            assert st["poker"]["hand_no"] >= 1, kind
+            hand = a.player_hand(human, g["id"])
+            assert hand["cards"] and len(hand["cards"]) == 2, hand
+        if kind == "blackjack":
+            assert st["blackjack"]["hand_no"] >= 1, kind
+        # one open game per kind: re-challenge same kind 409s, other kinds OK
+        expect_api(lambda k=kind: a.human_challenge(human, "Zuckbot", k), 409)
+        g_resume = a.human_challenge(human, "", kind)
+        assert g_resume["id"] == g["id"], kind
+    # bad kind rejected
+    expect_api(lambda: a.human_challenge(human, "Zuckbot", "chess"), 400)
+    print("all-5-kinds OK")
+
     # ---- stake verify rejects bad receipts ----
     a, _ = fresh()
     s = a.human_session(WALLET, "KnightOwl")
