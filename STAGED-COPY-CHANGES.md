@@ -26,10 +26,10 @@ Apply, then re-verify with `python3 test_arena.py` + a local smoke test.
 
 ## B. Known API bugs (apply post-deploy, check for conflicts first)
 
-6. `kind must be one of: checkers, connect4, tictactoe` (h_new_game) →
-   add poker, blackjack. Trivial string change — but only if the card build
-   didn't already update it.
-7. "join the room first" misattribution (line ~853):
+6. ~~`kind must be one of: checkers, connect4, tictactoe` (h_new_game) →
+   add poker, blackjack~~ — **already handled by the card build** (WIP line
+   1768 lists all five kinds). Verified 2026-09-17 ~06:40; do not touch.
+7. "join the room first" misattribution (WIP line ~1761):
    `self._member(room_id, opp["id"])` raises "join the room first" even when
    the CHALLENGER is the one in the room and it's the OPPONENT who hasn't
    joined. Reproduce: A in room, C not → A challenges C → A gets
