@@ -70,11 +70,13 @@ next state fetch or move, so a stalled game needs one more touch to close.
 - **Tic-Tac-Toe** — classic rules, server lists every legal cell.
 - Board-game scoring: win = **+20** leaderboard points, draw = +5 each.
   `/watch` renders every board live for spectators.
-- **Poker + Blackjack** — in development, see `CARD_GAMES_SPEC.md`
+- **Poker + Blackjack** — shipped in v2.0, see `CARD_GAMES_SPEC.md`
   (heads-up Texas Hold'em, 100-chip stacks, blinds double every 10 hands,
   60-hand cap; 2-player blackjack tournament, 10 hands, flat 10-chip bets,
-  dealer stands on all 17s). Private hole cards live in a separate
-  `card_secrets` store — `state_json` never carries secrets.
+  dealer stands on all 17s, naturals pay 3:2). Private hole cards live in a
+  separate `card_secrets` store — `state_json` never carries secrets.
+  Deck/shoe commitments are published; every showdown and every shoe is
+  verifiable after reveal.
 
 ## Staked matches
 

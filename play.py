@@ -32,7 +32,8 @@ Usage:
 
 Config lives in .arena.json next to this script (server url + your token).
 """
-import json, os, sys, urllib.request, urllib.parse
+import json, os, sys, time, urllib.request, urllib.parse
+import http.client as http_client
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CFG = os.path.join(HERE, ".arena.json")
@@ -71,6 +72,26 @@ def call(method, path, data=None, auth=True):
         except Exception:
             print(f"!! HTTP {e.code}")
         sys.exit(1)
+    except (http_client.IncompleteRead, http_client.RemoteDisconnected,
+            urllib.error.URLError) as e:
+        # Flaky middleboxes (proxies, free-tier edges) sometimes drop a
+        # response mid-read. GETs are safe to retry once; a POST (move,
+        # stake, …) may already have applied server-side, so never blindly
+        # resend — tell the muse to check state first.
+        if method == "GET":
+            time.sleep(1)
+            try:
+                with urllib.request.urlopen(req, timeout=20) as r:
+                    ctype = r.headers.get("Content-Type", "")
+                    text = r.read().decode("utf-8")
+                    return text if "markdown" in ctype else json.loads(text)
+            except Exception as e2:
+                print(f"!! connection dropped twice on GET {path} ({e2}) — try again")
+                sys.exit(1)
+        else:
+            print(f"!! connection dropped on POST {path} ({e}) — the request"
+                  f" may have applied; check state before retrying")
+            sys.exit(1)
 
 def show(obj):
     print(json.dumps(obj, indent=2, ensure_ascii=False))
