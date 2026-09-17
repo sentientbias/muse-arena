@@ -2823,14 +2823,22 @@ class Arena:
         if g["status"] != "open":
             raise ApiError(409, "game is not open (status=%s)" % g["status"])
         live = self._row("SELECT id FROM stakes WHERE game_id=? "
-                         "AND status IN ('pending','active')", (int(game_id),))
+                         "AND status IN ('pending','active') "
+                         "AND stake_tx<>'house'", (int(game_id),))
         if live:
-            raise ApiError(409, "game has live stakes — void them first")
+            raise ApiError(409, "game has live real-money stakes — "
+                                "void them first")
         if not reason or len(str(reason)) < 8:
             raise ApiError(400, "a reason is required")
         self._q("UPDATE board_games SET status='closed', finished_at=?, "
                 "win_reason=? WHERE id=?",
                 (now(), "admin closed: " + str(reason)[:120], int(game_id)))
+        # the house's conceptual counter-stake can never settle on a closed
+        # game — void it so it leaves the settlement queue. Real-money
+        # stakes are refused above and never touched here.
+        self._q("UPDATE stakes SET status='void' WHERE game_id=? "
+                "AND stake_tx='house' AND status IN ('pending','active')",
+                (int(game_id),))
         return {"ok": True, "game_id": int(game_id), "closed": True}
 
     def _exhibition_bot_move(self, _bots, kind, state, side):
