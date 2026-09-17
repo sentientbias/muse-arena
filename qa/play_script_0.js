@@ -1,0 +1,533 @@
+
+"use strict";
+var S = {wallet:null, token:null, name:null, gameId:null, cfg:null, kind:null,
+         game:null, sel:null, dests:[], pollT:null, clockT:null, staking:false,
+         hand:null, betAmt:""};
+function $(id){return document.getElementById(id);}
+function show(id){["step1","stepGame","step2","step3","game"].forEach(function(s){
+  $(s).classList.toggle("hidden",s!==id);});}
+function steps(n){for(var i=0;i<4;i++)$("sg"+i).classList.toggle("on",i<=n);}
+function showErr(m){$("err").textContent=m;$("ok").textContent="";}
+function showOk(m){$("ok").textContent=m;$("err").textContent="";}
+async function api(path,body){
+  var opt={headers:{"Content-Type":"application/json"}};
+  if(body){opt.method="POST";opt.body=JSON.stringify(body);}
+  var r=await fetch(path,opt),d;
+  try{d=await r.json();}catch(e){throw new Error("arena unreachable ("+r.status+")");}
+  if(!r.ok)throw new Error((d&&d.error)||("request failed ("+r.status+")"));
+  return d;
+}
+function save(){try{localStorage.setItem("ma_human",
+  JSON.stringify({wallet:S.wallet,token:S.token,name:S.name}));}catch(e){}}
+(function(){try{var d=JSON.parse(localStorage.getItem("ma_human")||"{}");
+  S.wallet=d.wallet||null;S.token=d.token||null;S.name=d.name||null;}catch(e){}})();
+async function loadCfg(){
+  if(S.cfg)return S.cfg;
+  S.cfg=await api("/api/human/config");return S.cfg;
+}
+
+/* ---------- wallet (deferred: connects at stake time, not on arrival) ---------- */
+function renderStakeGate(){
+  var connected=!!S.wallet;
+  $("stakeWallet").classList.toggle("hidden",connected);
+  $("stakePay").classList.toggle("hidden",!connected);
+  if(connected){
+    $("walletAddr").textContent=S.wallet;$("walletAddr").classList.remove("hidden");
+  }
+}
+async function connectWallet(){
+  var btn=$("btnConnect");btn.disabled=true;
+  try{
+    if(!window.ethereum)throw new Error("no wallet found — open this page in MetaMask or Coinbase Wallet");
+    var accs=await window.ethereum.request({method:"eth_requestAccounts"});
+    if(!accs||!accs.length)throw new Error("wallet didn't share any accounts");
+    S.wallet=accs[0];
+    var cfg=await loadCfg();
+    try{
+      await window.ethereum.request({method:"wallet_switchEthereumChain",
+        params:[{chainId:cfg.chain_id_hex}]});
+    }catch(e){
+      if(e&&e.code===4902){
+        await window.ethereum.request({method:"wallet_addEthereumChain",params:[{
+          chainId:cfg.chain_id_hex,chainName:"Base",
+          rpcUrls:["https://mainnet.base.org"],
+          blockExplorerUrls:["https://basescan.org"],
+          nativeCurrency:{name:"Ether",symbol:"ETH",decimals:18}}]});
+      }else if(e&&e.code===4001){throw new Error("switch to Base to play");}
+    }
+    $("walletAddr").textContent=S.wallet;$("walletAddr").classList.remove("hidden");
+    save();renderStakeGate();showOk("Wallet connected — ready to stake.");
+  }catch(e){showErr(e.message||String(e));}
+  btn.disabled=false;
+}
+
+/* ---------- session ---------- */
+async function claimSeat(){
+  var name=$("nameInput").value.trim();
+  if(name.length<2){showErr("Pick a name, at least 2 characters.");return;}
+  var btn=$("btnName");btn.disabled=true;btn.innerHTML='<span class="spin"></span>claiming…';
+  try{
+    var d=await api("/api/human/session",{wallet:S.wallet,name:name,token:S.token});
+    S.token=d.token;S.name=d.name;save();
+    steps(1);show("stepGame");
+    showOk("Seat claimed — welcome to the tables, "+d.name+".");
+  }catch(e){
+    if(/session expired/.test(e.message||"")){S.token=null;save();
+      showErr("Session expired — claim your seat again.");}
+    else showErr(e.message);
+    btn.disabled=false;btn.textContent="Claim my seat";}
+}
+
+/* ---------- game picker ---------- */
+var KIND_LABEL={checkers:"Checkers",connect4:"Connect Four",tictactoe:"Tic-Tac-Toe",
+  poker:"Poker",blackjack:"Blackjack"};
+document.querySelectorAll(".gcard").forEach(function(el){
+  el.onclick=function(){
+    document.querySelectorAll(".gcard").forEach(function(x){x.classList.remove("sel");});
+    el.classList.add("sel");
+    S.kind=el.getAttribute("data-kind");
+    $("btnChallenge").textContent="Challenge to "+KIND_LABEL[S.kind];
+    show("step2");steps(1);
+  };
+});
+
+/* ---------- challenge ---------- */
+async function challenge(){
+  var opp=$("oppInput").value.trim()||"Zuckbot";
+  if(!S.kind){showErr("Pick a game first.");show("stepGame");return;}
+  var btn=$("btnChallenge");btn.disabled=true;btn.innerHTML='<span class="spin"></span>setting the table…';
+  try{
+    var d=await api("/api/human/challenge",{token:S.token,opponent:opp,kind:S.kind});
+    S.gameId=d.id;S.sel=null;S.dests=[];S.hand=null;
+    steps(2);
+    $("oppNameStake").textContent=d.players[1]||"Opponent";
+    renderGame(d);
+  }catch(e){
+    if(/already have an open/.test(e.message)){
+      try{
+        var g2=await api("/api/human/challenge",{token:S.token,kind:S.kind});
+        S.gameId=g2.id;steps(2);
+        $("oppNameStake").textContent=g2.players[1]||"Opponent";
+        renderGame(g2);showOk("Resumed your open "+KIND_LABEL[S.kind]+" game.");return;
+      }catch(e2){}
+    }
+    showErr(e.message);btn.disabled=false;
+    btn.textContent="Challenge to "+KIND_LABEL[S.kind];
+  }
+}
+
+/* ---------- stake ---------- */
+function pad32(s){s=String(s).replace(/^0x/,"");while(s.length<64)s="0"+s;return s;}
+async function stake(){
+  if(S.staking)return;
+  if(!S.wallet){showErr("Connect your wallet first — it's only needed to send the $1 stake.");renderStakeGate();return;}
+  S.staking=true;
+  var btn=$("btnStake");btn.disabled=true;btn.innerHTML='<span class="spin"></span>waiting for wallet…';
+  try{
+    var cfg=await loadCfg();
+    if(!window.ethereum)throw new Error("wallet missing");
+    var data="0xa9059cbb"+pad32(cfg.pay_to)+pad32(cfg.stake_units.toString(16));
+    var txHash=await window.ethereum.request({method:"eth_sendTransaction",params:[{
+      from:S.wallet,to:cfg.usdc,value:"0x0",data:data}]});
+    btn.innerHTML='<span class="spin"></span>verifying onchain…';
+    await verifyStake(txHash);
+  }catch(e){
+    showErr("Stake failed: "+(e.message||e));btn.disabled=false;btn.textContent="Stake $1 USDC";
+  }finally{S.staking=false;}
+}
+async function verifyStake(txHash){
+  for(var i=0;i<8;i++){
+    try{
+      var d=await api("/api/human/stake",{token:S.token,game_id:S.gameId,tx_hash:txHash,wallet:S.wallet});
+      showOk(d.note||"Stake recorded.");
+      refreshGame();
+      return;
+    }catch(e){
+      if(/not confirmed yet/.test(e.message)){await new Promise(function(r){setTimeout(r,4000);});continue;}
+      throw e;
+    }
+  }
+  throw new Error("still not confirmed after ~30s — paste the tx hash below and verify it manually");
+}
+
+/* ---------- shared game chrome ---------- */
+function myTurn(g){return g.status==="open"&&g.turn===S.name;}
+function renderGame(g){
+  S.game=g;
+  var open=g.status==="open",me=myTurn(g),tl=$("turnLabel");
+  if(!open){tl.textContent="game over";tl.className="turn";}
+  else if(me){tl.textContent="your move";tl.className="turn me";}
+  else{tl.textContent=(g.turn||"opponent")+" to move";tl.className="turn opp";}
+  var mineUnits=((g.stakes_by_player||{})[S.name]||0);
+  $("myStake").textContent=mineUnits>0?"$1.00 ✓":"not staked";
+  $("oppStake").textContent=g.staked?"$1.00 ✓":"not staked";
+  var needStake=open&&!(mineUnits>0);
+  show(needStake?"step3":"game");
+  if(needStake){steps(2);renderStakeGate();return;}
+  steps(3);
+  $("resultCard").classList.add("hidden");
+  $("btnResign").classList.toggle("hidden",!open);
+  var zone=$("boardZone");zone.innerHTML="";
+  var done=function(){
+    var bm=$("boardMsg");
+    if(!open){bm.textContent="";showResult(g);}
+    startClock(g);
+    clearTimeout(S.pollT);
+    if(open&&!me)S.pollT=setTimeout(refreshGame,3000);
+  };
+  if(g.kind==="checkers")renderCheckers(g,zone,done);
+  else if(g.kind==="connect4")renderConnect4(g,zone,done);
+  else if(g.kind==="tictactoe")renderTicTacToe(g,zone,done);
+  else if(g.kind==="poker")renderPoker(g,zone,done);
+  else if(g.kind==="blackjack")renderBlackjack(g,zone,done);
+  else{$("boardMsg").textContent="unknown game kind";done();}
+}
+async function doMove(move){
+  var bm=$("boardMsg");bm.textContent="moving…";bm.className="msg";
+  try{
+    var g=await api("/api/games/"+S.gameId+"/move",
+      {token:S.token,move:move,idempotency_key:"h"+Date.now()+Math.random().toString(16).slice(2)});
+    S.sel=null;S.dests=[];S.hand=null;
+    renderGame(g);
+  }catch(e){showErr(e.message);refreshGame();}
+}
+async function refreshGame(){
+  if(!S.gameId)return;
+  try{var g=await api("/api/games/"+S.gameId+"?token="+encodeURIComponent(S.token));
+    renderGame(g);
+  }catch(e){/* transient */}
+}
+function startClock(g){
+  clearInterval(S.clockT);
+  var cl=$("clockLabel");
+  function tick(){
+    if(g.status!=="open"||g.seconds_left==null){cl.textContent="";return;}
+    var age=Math.floor((Date.now()-S._fetchedAt)/1000);
+    var left=Math.max(0,g.seconds_left-age);
+    var m=Math.floor(left/60),s=left%60;
+    cl.textContent=(g.turn===S.name?"you":"opp")+": "+m+":"+(s<10?"0":"")+s;
+    cl.className="clock"+(left<30?" low":"");
+  }
+  S._fetchedAt=Date.now();tick();S.clockT=setInterval(tick,1000);
+}
+function celebrateWin(g){
+  if(S._winFx===g.id)return;S._winFx=g.id;
+  var ov=document.createElement("div");ov.id="winOverlay";
+  var colors=["#f2b01e","#35d07f","#ffffff","#ff5470","#7cc4ff"];
+  var html='<div class="win-burst"><div class="win-title">YOU WIN!</div>'+
+    '<div class="win-amount">+$1.90 USDC</div>'+
+    '<div class="win-sub">$1.90 USDC heads to your wallet shortly</div>'+
+    '<button class="btn win-btn">Collect 🎉</button></div>';
+  for(var i=0;i<90;i++){
+    html+='<div class="confetti" style="left:'+(Math.random()*100).toFixed(2)+'%;background:'+colors[i%colors.length]+
+      ';animation-duration:'+(2.2+Math.random()*2.4).toFixed(2)+'s;animation-delay:'+(Math.random()*0.9).toFixed(2)+
+      's;width:'+(6+Math.random()*7).toFixed(0)+'px;height:'+(10+Math.random()*10).toFixed(0)+'px"></div>';
+  }
+  ov.innerHTML=html;
+  var done=false;
+  function close(){if(done)return;done=true;ov.remove();}
+  ov.addEventListener("click",close);
+  setTimeout(close,6000);
+  document.body.appendChild(ov);
+}
+function showResult(g){
+  var box=$("resultBox"),card=$("resultCard");
+  var won=g.winner===S.name,lost=g.winner&&!won,draw=g.win_reason==="draw";
+  box.className="result "+(won?"win":lost?"lose":"draw");
+  var h=won?"You win $1.90 🏆":lost?(g.winner+" wins"):"Draw";
+  var sub=g.win_reason==="draw"?"nobody takes the pot — both stakes refunded":
+    won?"$1.90 USDC heads to your wallet shortly (payouts settle after each round)":
+    lost?"tough table. run it back?":"game over";
+  if(g.win_reason&&g.win_reason!=="draw"&&g.win_reason!=="win")
+    sub+=" · "+g.win_reason;
+  box.innerHTML="<h2>"+h+"</h2><p>"+sub+"</p>";
+  card.classList.remove("hidden");
+  if(won)celebrateWin(g);
+  $("btnResign").classList.add("hidden");
+  clearTimeout(S.pollT);
+}
+
+/* ---------- checkers ---------- */
+function renderCheckers(g,zone,done){
+  var me=myTurn(g),open=g.status==="open";
+  var t=document.createElement("table");t.className="grid";
+  var lmF=g.last_move&&g.last_move.move&&g.last_move.move.from;
+  var lmT=g.last_move&&g.last_move.move&&g.last_move.move.to;
+  for(var r=0;r<8;r++){var tr=document.createElement("tr");
+    for(var c=0;c<8;c++)(function(r,c){
+      var td=document.createElement("td");
+      var dark=(r+c)%2===1,v=g.board[r]&&g.board[r][c],pc="";
+      if(v){var king=(v==="B"||v==="W"),side=(String(v).toLowerCase()==="b")?"pb":"pw";
+        pc='<div class="piece '+side+(king?" king":"")+'">'+(king?"♛":"")+"</div>";}
+      var cls="chk-cell "+(dark?"dark":"light");
+      if((lmT&&lmT[0]===r&&lmT[1]===c)||(lmF&&lmF[0]===r&&lmF[1]===c))cls+=" lm";
+      if(S.sel&&S.sel[0]===r&&S.sel[1]===c)cls+=" sel";
+      var dest=(S.dests||[]).filter(function(d){return d.to[0]===r&&d.to[1]===c;})[0];
+      if(dest)cls+=" dest"+(Math.abs(dest.to[0]-dest.from[0])===2?" cap":"");
+      td.className=cls;td.innerHTML=pc;
+      td.onclick=function(){onChkCell(r,c);};
+      tr.appendChild(td);
+    })(r,c);
+    t.appendChild(tr);}
+  zone.appendChild(t);
+  var bm=$("boardMsg");
+  if(!open){bm.textContent="";}
+  else if(g.note&&me){bm.textContent=g.note;bm.className="msg must";}
+  else if(me){bm.textContent="tap one of your red pieces, then tap a highlighted square";bm.className="msg";}
+  else{bm.textContent="waiting on "+(g.turn||"opponent")+"…";bm.className="msg";}
+  done();
+}
+function onChkCell(r,c){
+  var g=S.game;if(!g||g.status!=="open"||!myTurn(g))return;
+  var dest=(S.dests||[]).filter(function(d){return d.to[0]===r&&d.to[1]===c;})[0];
+  if(dest&&S.sel){doMove({from:S.sel,to:dest.to});return;}
+  var v=g.board[r]&&g.board[r][c];
+  var mine=v&&(String(v).toLowerCase()==="b");
+  if(mine){
+    if(S.sel&&S.sel[0]===r&&S.sel[1]===c){S.sel=null;S.dests=[];renderGame(g);return;}
+    S.sel=[r,c];
+    S.dests=(g.legal_moves||[]).filter(function(m){return m.from[0]===r&&m.from[1]===c;});
+    if(!S.dests.length)showErr("that piece has no legal moves — captures are mandatory");
+    renderGame(g);return;
+  }
+  S.sel=null;S.dests=[];renderGame(g);
+}
+
+/* ---------- connect four ---------- */
+function renderConnect4(g,zone,done){
+  var me=myTurn(g),open=g.status==="open";
+  var t=document.createElement("table");t.className="grid";
+  var cols=g.cols||[];
+  var legalCols={};(g.legal_moves||[]).forEach(function(m){legalCols[m.column]=1;});
+  var tr0=document.createElement("tr");
+  for(var c=0;c<7;c++)(function(c){
+    var td=document.createElement("td");td.className="c4drop";
+    td.textContent=legalCols[c]&&me?"▾":"·";
+    td.onclick=function(){if(me&&open&&legalCols[c])doMove({column:c});};
+    tr0.appendChild(td);
+  })(c);
+  t.appendChild(tr0);
+  for(var r=5;r>=0;r--){var tr=document.createElement("tr");
+    for(var c2=0;c2<7;c2++)(function(c2){
+      var td=document.createElement("td");td.className="c4-cell";
+      var v=cols[c2]&&cols[c2][r];
+      td.innerHTML='<div class="slot '+(v===1?"x":v===2?"o":"")+'"></div>';
+      td.onclick=function(){if(me&&open&&legalCols[c2])doMove({column:c2});};
+      tr.appendChild(td);
+    })(c2);
+    t.appendChild(tr);}
+  zone.appendChild(t);
+  var bm=$("boardMsg");
+  if(open&&me){bm.textContent="tap a column (▾) to drop your red chip";bm.className="msg";}
+  else if(open){bm.textContent="waiting on "+(g.turn||"opponent")+"…";bm.className="msg";}
+  done();
+}
+
+/* ---------- tic-tac-toe ---------- */
+function renderTicTacToe(g,zone,done){
+  var me=myTurn(g),open=g.status==="open";
+  var t=document.createElement("table");t.className="grid";
+  var b=g.board||[];
+  for(var r=0;r<3;r++){var tr=document.createElement("tr");
+    for(var c=0;c<3;c++)(function(i){
+      var td=document.createElement("td");
+      var v=b[i];
+      td.className="ttt-cell"+(v===1?" x":v===2?" o":"")+(v?" taken":"");
+      td.textContent=v===1?"✕":v===2?"◯":"";
+      td.onclick=function(){
+        if(me&&open&&!v)doMove({cell:i});
+        else if(me&&open&&v)showErr("that cell is taken");
+      };
+      tr.appendChild(td);
+    })(r*3+c);
+    t.appendChild(tr);}
+  zone.appendChild(t);
+  var bm=$("boardMsg");
+  if(open&&me){bm.textContent="you're ✕ — tap an empty square";bm.className="msg";}
+  else if(open){bm.textContent="waiting on "+(g.turn||"opponent")+"…";bm.className="msg";}
+  done();
+}
+
+/* ---------- cards ---------- */
+var SUITMAP={c:"♣",d:"♦",h:"♥",s:"♠"};
+function cardHTML(cd,small){
+  if(!cd)return '<div class="cardc back'+(small?" small":"")+'"></div>';
+  var rank=cd.slice(0,-1),suit=cd.slice(-1);
+  var red=(suit==="d"||suit==="h");
+  return '<div class="cardc'+(red?" red":"")+(small?" small":"")+'">'+
+    rank+'<span class="s">'+(SUITMAP[suit]||suit)+"</span></div>";
+}
+async function fetchHand(g){
+  if(g.kind!=="poker"&&g.kind!=="blackjack")return null;
+  try{
+    var h=await api("/api/games/"+g.id+"/hand?token="+encodeURIComponent(S.token));
+    S.hand=h;return h;
+  }catch(e){return null;}
+}
+
+/* ---------- poker ---------- */
+async function renderPoker(g,zone,done){
+  var me=myTurn(g),open=g.status==="open";
+  var p=g.poker||{};
+  var div=document.createElement("div");div.className="felt";
+  var opp=g.players.filter(function(n){return n!==S.name;})[0]||"opponent";
+  var myStack=(p.stacks||{})[S.name],oppStack=(p.stacks||{})[opp];
+  var h='<div class="potline"><span>hand #'+(p.hand_no||1)+
+    ' · blinds '+(p.blinds||[]).join("/")+'</span><span class="pot">pot '+(p.pot||0)+"</span></div>";
+  h+='<div class="stacks"><span>you <b>'+myStack+'</b></span><span>'+opp+' <b>'+oppStack+'</b></span></div>';
+  h+='<div class="streetlbl">'+(p.street||"")+(p.sudden_death?" · sudden death":"")+"</div>";
+  h+='<div class="commrow">'+(((p.community||[]).map(function(c){return cardHTML(c);}).join(""))||'<span style="color:var(--mut2)">pre-flop</span>')+"</div>";
+  h+='<div class="youlbl">your hole cards</div><div class="handrow" id="holeRow"><div style="color:var(--mut2);font-size:13px">…</div></div>';
+  h+='<div id="pokerActions"></div>';
+  h+='<div class="lastaction">'+(p.last_action||"")+"</div>";
+  if(p.last_hand){var lh=p.last_hand;
+    h+='<div class="results">last: hand #'+(lh.hand_no||"")+" \u2014 "+
+       (lh.winners||[]).join(", ")+" won "+(lh.pot||0)+
+       (lh.ended==="showdown"?" at showdown":" ("+(lh.ended||"")+")")+"</div>";}
+  div.innerHTML=h;zone.appendChild(div);
+  // private hole cards
+  var hand=await fetchHand(g);
+  var hr=$("holeRow");
+  if(hr){
+    var hole=hand&&(hand.hole||hand.cards);
+    if(hole&&hole.length)hr.innerHTML=hole.map(function(c){return cardHTML(c);}).join("");
+    else hr.innerHTML='<span style="color:var(--mut2);font-size:13px">cards hidden</span>';
+  }
+  // actions
+  var pa=$("pokerActions");
+  if(pa){
+    if(open&&me){
+      var legal=g.legal_moves||[];
+      var has=function(a){return legal.filter(function(m){return m.action===a;})[0];};
+      var html='<div class="actions">';
+      var f;
+      if((f=has("fold")))html+='<button class="abtn danger" data-a="fold">Fold</button>';
+      if((f=has("check")))html+='<button class="abtn" data-a="check">Check</button>';
+      if((f=has("call")))html+='<button class="abtn primary" data-a="call">Call '+f.amount+'</button>';
+      if(has("bet")||has("raise")){
+        var br=has("bet")||has("raise");
+        var min=br.min_amount||br.min_total||2;
+        html+='<button class="abtn primary" data-a="'+br.action+'">'+
+          (br.action==="bet"?"Bet":"Raise to")+'</button>';
+        html+='</div><div class="amtrow"><input type="number" id="betAmt" min="'+min+
+          '" value="'+(S.betAmt||min)+'" step="1"></div><div class="actions">';
+      }
+      if((f=has("allin")))html+='<button class="abtn danger" data-a="allin">All-in ('+myStack+')</button>';
+      html+="</div>";
+      pa.innerHTML=html;
+      var callInfo=has("call");
+      pa.querySelectorAll("button").forEach(function(b){
+        b.onclick=function(){
+          var a=b.getAttribute("data-a"),mv={action:a};
+          if(a==="call"&&callInfo)mv.amount=callInfo.amount;
+          if(a==="bet"||a==="raise"){
+            var v=parseInt(($("betAmt")||{}).value,10);
+            if(!(v>0)){showErr("enter an amount");return;}
+            mv.amount=v;S.betAmt=v;
+          }
+          doMove(mv);
+        };
+      });
+    }else if(open){
+      pa.innerHTML='<div class="lastaction">waiting on '+(g.turn||"opponent")+'…</div>';
+    }
+  }
+  var bm=$("boardMsg");
+  if(open&&me){
+    var tc=p.to_call||0;
+    bm.textContent=tc>0?("to call: "+tc+" chips — fold, call, raise or shove"):
+      "your bet — check, bet, or go all-in";
+    bm.className="msg must";
+  }else if(open){bm.textContent="";bm.className="msg";}
+  done();
+}
+
+/* ---------- blackjack ---------- */
+async function renderBlackjack(g,zone,done){
+  var me=myTurn(g),open=g.status==="open";
+  var b=g.blackjack||{};
+  var div=document.createElement("div");div.className="felt";
+  var opp=g.players.filter(function(n){return n!==S.name;})[0]||"opponent";
+  var myHand=(b.player_hands||{})[S.name]||[];
+  var oppHand=(b.player_hands||{})[opp]||[];
+  var myTot=(b.player_totals||{})[S.name]||[0,false];
+  var dTot=b.dealer_total;
+  var h='<div class="potline"><span>hand '+(b.hand_no||1)+' / '+(b.hands_total||10)+
+    '</span><span class="pot">you '+(b.stacks||{})[S.name]+' · '+opp+" "+(b.stacks||{})[opp]+"</span></div>";
+  h+='<div class="dealerlbl">dealer '+(dTot?("· "+dTot[0]+(dTot[1]?" soft":"")):"")+"</div>";
+  h+='<div class="handrow">'+((b.dealer_hand||[]).map(function(c){return cardHTML(c,1);}).join(""))+"</div>";
+  h+='<div class="youlbl">you · bet '+(b.bets||{})[S.name]+'</div>';
+  h+='<div class="handrow">'+(myHand.map(function(c){return cardHTML(c);}).join(""))+"</div>";
+  h+='<div class="bjtotal">total <b>'+myTot[0]+(myTot[1]?" soft":"")+"</b></div>";
+  h+='<div class="youlbl">'+opp+' · bet '+(b.bets||{})[opp]+"</div>";
+  h+='<div class="handrow">'+(oppHand.map(function(c){return cardHTML(c,1);}).join(""))+"</div>";
+  h+='<div id="bjActions"></div>';
+  h+='<div class="lastaction">'+(b.last_action||"")+"</div>";
+  if((b.results||[]).length)
+    h+='<div class="results">'+b.results.slice(-4).join("<br>")+"</div>";
+  div.innerHTML=h;zone.appendChild(div);
+  var ba=$("bjActions");
+  if(ba&&open&&me){
+    var legal=g.legal_moves||[];
+    var has=function(a){return legal.some(function(m){return m.action===a;});};
+    var html='<div class="actions">';
+    if(has("hit"))html+='<button class="abtn primary" data-a="hit">Hit</button>';
+    if(has("stand"))html+='<button class="abtn" data-a="stand">Stand</button>';
+    if(has("double"))html+='<button class="abtn primary" data-a="double">Double</button>';
+    html+="</div>";ba.innerHTML=html;
+    ba.querySelectorAll("button").forEach(function(btn){
+      btn.onclick=function(){doMove({action:btn.getAttribute("data-a")});};
+    });
+  }else if(ba&&open){
+    ba.innerHTML='<div class="lastaction">waiting on '+(g.turn||"opponent")+'…</div>';
+  }
+  var bm=$("boardMsg");
+  if(open&&me){bm.textContent=myTot[0]>21?"bust — hand over":myTot[0]===21?"21! stand pat":"hit, stand, or double";bm.className="msg must";}
+  else if(open){bm.textContent="";bm.className="msg";}
+  done();
+}
+
+/* ---------- resign / again ---------- */
+$("btnResign").onclick=async function(){
+  if(!confirm("Resign this game? Your $1 stake is forfeit."))return;
+  try{var g=await api("/api/games/"+S.gameId+"/resign",{token:S.token});renderGame(g);}
+  catch(e){showErr(e.message);}
+};
+$("btnAgain").onclick=function(){
+  S.gameId=null;S.hand=null;S.sel=null;S.dests=[];
+  show("stepGame");steps(1);
+};
+
+/* ---------- wire up ---------- */
+$("btnConnect").onclick=connectWallet;
+$("btnName").onclick=claimSeat;
+$("btnChallenge").onclick=challenge;
+$("btnStake").onclick=stake;
+$("btnVerifyTx").onclick=async function(){
+  var h=$("txInput").value.trim();
+  if(!h){showErr("paste a tx hash first");return;}
+  try{await verifyStake(h);}catch(e){showErr(e.message);}
+};
+
+/* ---------- boot ---------- */
+(async function(){
+  try{await loadCfg();}catch(e){showErr("arena unreachable — try again in a bit");}
+  if(S.token&&S.name){
+    try{
+      var list=await api("/api/human/challenges");
+      var mine=(list||[]).filter(function(x){
+        return (x.players||[]).indexOf(S.name)>=0;});
+      if(mine.length){
+        var g0=mine[0];
+        S.kind=g0.kind||"checkers";
+        var g=await api("/api/human/challenge",{token:S.token,kind:S.kind});
+        if(g&&g.id){
+          S.gameId=g.id;steps(2);
+          $("oppNameStake").textContent=g.players[1]||"Opponent";
+          renderGame(g);showOk("Welcome back — resumed your open "+KIND_LABEL[S.kind]+" game.");return;
+        }
+      }
+    }catch(e){/* no open game — fall through */}
+    show("stepGame");steps(1);
+  }
+})();

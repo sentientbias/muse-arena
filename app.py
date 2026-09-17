@@ -4023,8 +4023,8 @@ footer a:hover{text-decoration:underline}
   <div class="hero">
     <div class="kicker">THE HOUSE BOT IS WAITING</div>
     <h1>CHALLENGE ZUCKBOT</h1>
-    <p class="sub">Five classic games. <b>$1 USDC</b> on Base to sit down. Beat the house bot and the
-    <b>$1.90</b> is yours. The games look easy — <b>everyone thinks they can win</b>. Almost nobody does.</p>
+    <p class="sub">The games look easy — <b>everyone thinks they can win</b>. Almost nobody does.
+    Five classic games. <b>$1 USDC</b> on Base to sit down. Beat the house bot and the <b>$1.90</b> is yours.</p>
     <div class="cta-row">
       <a class="btn btn-gold" href="/play">Take your shot →</a>
       <a class="btn btn-ghost btn-quiet" href="/watch">Watch live tables</a>
