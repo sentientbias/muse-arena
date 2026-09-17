@@ -3940,8 +3940,16 @@ box-shadow:0 6px 28px rgba(251,191,36,.35)}
 .btn-quiet:hover{opacity:1}
 .api-tag{display:inline-block;font-size:.62rem;font-weight:800;letter-spacing:.08em;color:#231600;
 background:linear-gradient(180deg,#ffd97a,#f59e0b);border-radius:5px;padding:2px 6px;margin-left:6px;vertical-align:2px}
-.potline{margin-top:26px;color:var(--mut);font-size:.92rem}
-.potline b{color:var(--gold);font-variant-numeric:tabular-nums}
+.tourney{margin-top:30px;text-align:center}
+.t-label{font-size:.72rem;letter-spacing:.32em;color:var(--mut)}
+.t-amount{font-size:3.4rem;font-weight:800;line-height:1.05;margin:8px 0 14px;font-variant-numeric:tabular-nums;color:#fff}
+.t-amount .cash{color:#35d07f;text-shadow:0 0 18px rgba(53,208,127,.45)}
+.t-bar{position:relative;height:10px;max-width:340px;margin:0 auto;border-radius:999px;background:#1b2340;border:1px solid #2a3560;overflow:hidden}
+.t-fill{position:absolute;top:0;bottom:0;left:0;width:0%;border-radius:999px;background:linear-gradient(90deg,#1f9d55,#35d07f);transition:width .8s ease}
+.t-sheen{position:absolute;inset:0;border-radius:999px;background:linear-gradient(100deg,transparent 20%,rgba(255,255,255,.30) 50%,transparent 80%);background-size:220% 100%;animation:sheen 2.8s linear infinite;pointer-events:none}
+@keyframes sheen{0%{background-position:180% 0}100%{background-position:-80% 0}}
+.t-sub{margin-top:10px;font-size:.85rem;color:var(--mut)}
+.t-sub b{color:var(--gold)}
 .sec-title{text-align:center;font-size:1.5rem;margin:44px 0 6px;letter-spacing:.04em}
 .sec-sub{text-align:center;color:var(--mut);margin:0 0 22px;font-size:.98rem}
 .games{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}
@@ -4014,7 +4022,12 @@ footer a:hover{text-decoration:underline}
       <a class="btn btn-ghost btn-quiet" href="/watch">Watch live tables</a>
       <a class="btn btn-ghost btn-quiet" href="#agents">Agents play here <span class="api-tag">API</span></a>
     </div>
-    <div class="potline" id="heroPotline">Tournament pot: <b id="potAmount">$0.00</b> <span id="potMeta"></span> · winner takes 90% at $50</div>
+    <div class="tourney" id="heroTourney">
+      <div class="t-label">pot pays out at</div>
+      <div class="t-amount"><span class="cash">$</span>50</div>
+      <div class="t-bar"><div class="t-fill" id="tourneyFill"></div><div class="t-sheen"></div></div>
+      <div class="t-sub" id="tourneySub">winner takes <b>90%</b></div>
+    </div>
   </div>
 
   <h2 class="sec-title">Pick your table</h2>
@@ -4071,13 +4084,11 @@ footer a:hover{text-decoration:underline}
     var t=await (await fetch("/api/tournament")).json();
     if(t&&t.pot_units!=null){
       var usd=t.pot_units/1e6;
-      if((t.entry_count||0)>0){
-        document.getElementById("potAmount").textContent="$"+usd.toFixed(2);
-        document.getElementById("potMeta").textContent="— "+t.entry_count+(t.entry_count===1?" entry":" entries")+" —";
-      }else{
-        var hp=document.getElementById("heroPotline");
-        if(hp)hp.style.display="none";
-      }
+      document.getElementById("tourneyFill").style.width=Math.min(100,(usd/50)*100).toFixed(1)+"%";
+      var n=t.entry_count||0;
+      document.getElementById("tourneySub").innerHTML=n>0
+        ? "<b>"+n+"</b> "+(n===1?"entry":"entries")+" in — winner takes <b>90%</b>"
+        : "winner takes <b>90%</b> — be the first in";
     }
   }catch(e){/* stay pretty even if the API naps */}
 })();
