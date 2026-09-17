@@ -551,6 +551,9 @@ def poker_move(hole, community, street, legal, ctx,
             return call_or_fold(0.5, 0.28)
         if chen >= 6 and to_call <= 2 * bb:
             return call_or_fold(0.35, 0.22)
+        if to_call <= bb:
+            # heads-up small blind: never fold to just the blind — 3:1+ odds
+            return {"action": "call", "amount": min(stack, to_call)}
         return {"action": "fold"}
 
     # postflop: Monte Carlo equity drives everything

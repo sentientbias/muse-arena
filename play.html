@@ -596,7 +596,10 @@ async function renderPoker(g,zone,done){
   h+='<div class="youlbl">your hole cards</div><div class="handrow" id="holeRow"><div style="color:var(--mut2);font-size:13px">…</div></div>';
   h+='<div id="pokerActions"></div>';
   h+='<div class="lastaction">'+(p.last_action||"")+"</div>";
-  if(p.last_hand)h+='<div class="results">last: '+p.last_hand+"</div>";
+  if(p.last_hand){var lh=p.last_hand;
+    h+='<div class="results">last: hand #'+(lh.hand_no||"")+" \u2014 "+
+       (lh.winners||[]).join(", ")+" won "+(lh.pot||0)+
+       (lh.ended==="showdown"?" at showdown":" ("+(lh.ended||"")+")")+"</div>";}
   div.innerHTML=h;zone.appendChild(div);
   // private hole cards
   var hand=await fetchHand(g);

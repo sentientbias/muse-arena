@@ -39,7 +39,7 @@ def main():
     try:
         for _ in range(50):
             try:
-                call("GET", "/", {})
+                call("GET", "/ping", {})  # v2.11: / returns landing HTML now
                 break
             except Exception:
                 time.sleep(0.1)

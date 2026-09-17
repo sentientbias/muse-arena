@@ -238,7 +238,9 @@ def run_tests(fake):
     assert gs["tournament_pot_usd"] == "2.00", gs
 
     _, watch = expect("GET", "/watch", 200, raw=True)
-    assert "pot $" in watch and "$50 target" in watch, "watch must show the honest pot line"
+    # pot hero shows the live pot amount and the $50 target line (v2.x markup)
+    assert "$50 TARGET" in watch, "watch must show the honest pot line"
+    assert "potAmount" in watch, "watch must show the live pot amount"
     assert "$50 prize" not in watch, "never present $50 as guaranteed"
 
     print("HTTP tournament tests passed")

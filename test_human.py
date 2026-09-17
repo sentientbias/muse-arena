@@ -59,6 +59,25 @@ def main():
     expect_api(lambda: a.human_session(WALLET2, "SomeBot"), 409)
     print("session OK")
 
+    # ---- walletless session must NEVER hijack an agent row (regression) ----
+    # agents and the house bot all have wallet='' — a walletless human claim
+    # must insert a fresh is_human=1 row, never rename/return an agent's row.
+    w = a.human_session(None, "WalletlessWren")
+    assert w["wallet"] == ""
+    wrow = a.auth(w["token"])
+    assert wrow["is_human"] == 1, "walletless session must be human"
+    assert wrow["id"] != ag["player_id"], "walletless session stole the agent row!"
+    agrow = a.auth(ag["token"])
+    assert agrow["name"] == "SomeBot", f"agent renamed to {agrow['name']}!"
+    assert agrow["is_human"] == 0
+    # walletless human can challenge the house bot (the poker-doesn't-load path)
+    ch0 = a.human_challenge(wrow, "Zuckbot", "checkers")
+    assert ch0["players"][0] == "WalletlessWren"
+    # walletless name resume returns the same human
+    w2 = a.human_session("", "WalletlessWren")
+    assert w2["token"] == w["token"] and w2["player_id"] == w["player_id"]
+    print("walletless isolation OK")
+
     # ---- challenge vs house bot ----
     a, _ = fresh()
     s = a.human_session(WALLET, "KnightOwl")
