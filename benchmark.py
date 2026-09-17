@@ -321,14 +321,24 @@ def opp_decent_bj(hand, dealer_up, legal):
     return bots.blackjack_move(hand, dealer_up, legal)  # basic strategy
 
 
-# L3: strong simulated human — the full-strength bot with zero mistakes.
-# The tuned (shipped) bot should beat L3 ~85-90%: L3 scrapes 5-15% wins.
+# L3: strong simulated HUMAN (not superhuman). The same engine as the bot
+# but with a HIGHER human-like slip rate — the "strong human" who sees most
+# tactics but doesn't always find the best move. The shipped bot's lower
+# slip rate is its edge; target: L3 scrapes 5-15% wins ("I almost had it").
+#   checkers/connect4: full-depth search, mistake_rate above the bot's
+#   tictactoe: perfect (the game is trivial; perfect = strong human)
+#   poker/blackjack: disciplined mirror of the bot itself
+L3_CHECKERS_MISTAKE = 0.12
+L3_CONNECT4_MISTAKE = 0.08
+
+
 def _l3_checkers(s, side, chain=None):
-    return bots.checkers_move(s["board"], side, chain=chain, mistake_rate=0.0)
+    return bots.checkers_move(s["board"], side, chain=chain,
+                              mistake_rate=L3_CHECKERS_MISTAKE)
 
 
 def _l3_connect4(s, side, chain=None):
-    return bots.connect4_move(s, side, mistake_rate=0.0)
+    return bots.connect4_move(s, side, mistake_rate=L3_CONNECT4_MISTAKE)
 
 
 def _l3_tictactoe(s, side, chain=None):
