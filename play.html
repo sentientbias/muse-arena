@@ -170,18 +170,10 @@ footer a{color:var(--cyan)}
 <div class="err" id="err"></div>
 <div class="ok" id="ok"></div>
 
-<!-- 0: wallet -->
-<div class="card" id="step0">
-  <h2><span class="n">1 ·</span> Connect your wallet</h2>
-  <p>Your wallet is your identity here — no email, no password. Open this page in a wallet browser (MetaMask, Coinbase Wallet, …) on <b>Base</b>.</p>
-  <button class="btn" id="btnConnect">Connect wallet</button>
-  <div class="addr hidden" id="walletAddr"></div>
-</div>
-
-<!-- 1: name -->
-<div class="card hidden" id="step1">
-  <h2><span class="n">2 ·</span> Pick a table name</h2>
-  <p>This is the name the crowd sees on the board. 2+ characters, letters/numbers/spaces.</p>
+<!-- 0: name (no wallet needed — wallet connects at stake time) -->
+<div class="card" id="step1">
+  <h2><span class="n">1 ·</span> Pick a table name</h2>
+  <p>This is the name the crowd sees on the board. 2+ characters, letters/numbers/spaces. No wallet needed yet — you'll connect it when you stake.</p>
   <input type="text" id="nameInput" maxlength="40" placeholder="e.g. knight_owl" autocomplete="off">
   <button class="btn" id="btnName">Claim my seat</button>
 </div>
@@ -207,9 +199,15 @@ footer a{color:var(--cyan)}
   <button class="btn" id="btnChallenge">Challenge</button>
 </div>
 
-<!-- 4: stake -->
+<!-- 4: stake (wallet connects HERE, at payment time) -->
 <div class="card hidden" id="step3">
-  <h2><span class="n">5 ·</span> Stake $1 USDC</h2>
+  <h2><span class="n">4 ·</span> Stake $1 USDC</h2>
+  <div id="stakeWallet">
+    <p>Almost there — connect your wallet to send the $1 stake. Open this page in a wallet browser (MetaMask, Coinbase Wallet, …) on <b>Base</b>.</p>
+    <button class="btn" id="btnConnect">Connect wallet</button>
+    <div class="addr hidden" id="walletAddr"></div>
+  </div>
+  <div id="stakePay" class="hidden">
   <p>Send exactly <b>$1.00 USDC</b> on Base to the arena wallet. Your wallet will ask you to confirm. Winner takes <b>$1.90</b> — $0.10 stays as rake. The house bot's $1 is house money; it can never be paid out.</p>
   <div class="stakerow"><span>You</span><b id="myStake">not staked</b></div>
   <div class="stakerow"><span id="oppNameStake">Opponent</span><b id="oppStake">—</b></div>
@@ -217,6 +215,7 @@ footer a{color:var(--cyan)}
   <p style="margin-top:10px">Already sent it? Paste the tx hash and we'll verify it onchain:</p>
   <input type="text" id="txInput" placeholder="0x…" autocomplete="off">
   <button class="btn ghost" id="btnVerifyTx">Verify tx hash</button>
+  </div>
 </div>
 
 <!-- game -->
@@ -246,7 +245,7 @@ var S = {wallet:null, token:null, name:null, gameId:null, cfg:null, kind:null,
          game:null, sel:null, dests:[], pollT:null, clockT:null, staking:false,
          hand:null, betAmt:""};
 function $(id){return document.getElementById(id);}
-function show(id){["step0","step1","stepGame","step2","step3","game"].forEach(function(s){
+function show(id){["step1","stepGame","step2","step3","game"].forEach(function(s){
   $(s).classList.toggle("hidden",s!==id);});}
 function steps(n){for(var i=0;i<4;i++)$("sg"+i).classList.toggle("on",i<=n);}
 function showErr(m){$("err").textContent=m;$("ok").textContent="";}
@@ -268,7 +267,15 @@ async function loadCfg(){
   S.cfg=await api("/api/human/config");return S.cfg;
 }
 
-/* ---------- wallet ---------- */
+/* ---------- wallet (deferred: connects at stake time, not on arrival) ---------- */
+function renderStakeGate(){
+  var connected=!!S.wallet;
+  $("stakeWallet").classList.toggle("hidden",connected);
+  $("stakePay").classList.toggle("hidden",!connected);
+  if(connected){
+    $("walletAddr").textContent=S.wallet;$("walletAddr").classList.remove("hidden");
+  }
+}
 async function connectWallet(){
   var btn=$("btnConnect");btn.disabled=true;
   try{
@@ -290,7 +297,7 @@ async function connectWallet(){
       }else if(e&&e.code===4001){throw new Error("switch to Base to play");}
     }
     $("walletAddr").textContent=S.wallet;$("walletAddr").classList.remove("hidden");
-    save();show("step1");steps(0);showOk("Wallet connected.");
+    save();renderStakeGate();showOk("Wallet connected — ready to stake.");
   }catch(e){showErr(e.message||String(e));}
   btn.disabled=false;
 }
@@ -349,7 +356,9 @@ async function challenge(){
 /* ---------- stake ---------- */
 function pad32(s){s=String(s).replace(/^0x/,"");while(s.length<64)s="0"+s;return s;}
 async function stake(){
-  if(S.staking)return;S.staking=true;
+  if(S.staking)return;
+  if(!S.wallet){showErr("Connect your wallet first — it's only needed to send the $1 stake.");renderStakeGate();return;}
+  S.staking=true;
   var btn=$("btnStake");btn.disabled=true;btn.innerHTML='<span class="spin"></span>waiting for wallet…';
   try{
     var cfg=await loadCfg();
@@ -366,7 +375,7 @@ async function stake(){
 async function verifyStake(txHash){
   for(var i=0;i<8;i++){
     try{
-      var d=await api("/api/human/stake",{token:S.token,game_id:S.gameId,tx_hash:txHash});
+      var d=await api("/api/human/stake",{token:S.token,game_id:S.gameId,tx_hash:txHash,wallet:S.wallet});
       showOk(d.note||"Stake recorded.");
       refreshGame();
       return;
@@ -391,7 +400,7 @@ function renderGame(g){
   $("oppStake").textContent=g.staked?"$1.00 ✓":"not staked";
   var needStake=open&&!(mineUnits>0);
   show(needStake?"step3":"game");
-  if(needStake){steps(2);return;}
+  if(needStake){steps(2);renderStakeGate();return;}
   steps(3);
   $("resultCard").classList.add("hidden");
   $("btnResign").classList.toggle("hidden",!open);
@@ -717,10 +726,6 @@ $("btnVerifyTx").onclick=async function(){
 (async function(){
   try{await loadCfg();}catch(e){showErr("arena unreachable — try again in a bit");}
   if(S.token&&S.name){
-    if(!S.wallet){show("step0");return;}
-    $("walletAddr").textContent=S.wallet;$("walletAddr").classList.remove("hidden");
-    $("btnConnect").style.display="none";
-    $("step0").querySelector("p").innerHTML="Welcome back, <b>"+S.name+"</b>.";
     try{
       var list=await api("/api/human/challenges");
       var mine=(list||[]).filter(function(x){
