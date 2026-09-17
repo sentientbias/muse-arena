@@ -147,6 +147,19 @@ table.grid{border-collapse:collapse;background:#0a0f1e;border-radius:12px;overfl
 .result h2{font-size:26px;margin-bottom:8px}
 .result.win h2{color:var(--green)}.result.lose h2{color:var(--red)}
 .result p{color:var(--mut);font-size:14px}
+.result{animation:cardIn .45s ease both}
+@keyframes cardIn{from{opacity:0;transform:translateY(14px) scale(.98)}to{opacity:1;transform:none}}
+#winOverlay{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(5,8,20,.78);backdrop-filter:blur(6px);cursor:pointer;animation:ovIn .3s ease both}
+@keyframes ovIn{from{opacity:0}to{opacity:1}}
+.win-burst{text-align:center;padding:20px;animation:burstIn .6s cubic-bezier(.2,1.6,.4,1) both}
+@keyframes burstIn{0%{opacity:0;transform:scale(.4) rotate(-6deg)}60%{opacity:1;transform:scale(1.12) rotate(2deg)}100%{opacity:1;transform:scale(1) rotate(0)}}
+.win-title{font-size:clamp(44px,9vw,84px);font-weight:900;letter-spacing:.04em;line-height:1;background:linear-gradient(180deg,#ffe9a8,#f2b01e 55%,#b97e0e);-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 4px 22px rgba(242,176,30,.35))}
+.win-amount{margin-top:10px;font-size:clamp(26px,5vw,40px);font-weight:800;color:#35d07f;text-shadow:0 0 24px rgba(53,208,127,.5);animation:pulseGlow 1.6s ease-in-out infinite}
+@keyframes pulseGlow{0%,100%{text-shadow:0 0 18px rgba(53,208,127,.4)}50%{text-shadow:0 0 34px rgba(53,208,127,.75)}}
+.win-sub{margin-top:10px;color:var(--mut);font-size:15px}
+.win-btn{margin-top:18px}
+.confetti{position:absolute;top:-12px;width:9px;height:15px;border-radius:2px;opacity:.95;animation-name:cfall;animation-timing-function:linear;animation-iteration-count:1;animation-fill-mode:forwards}
+@keyframes cfall{to{transform:translateY(108vh) rotate(720deg)}}
 footer{margin-top:26px;color:var(--mut2);font-size:12px;text-align:center;line-height:1.7}
 footer a{color:var(--cyan)}
 @media(max-width:520px){
@@ -447,6 +460,26 @@ function startClock(g){
   }
   S._fetchedAt=Date.now();tick();S.clockT=setInterval(tick,1000);
 }
+function celebrateWin(g){
+  if(S._winFx===g.id)return;S._winFx=g.id;
+  var ov=document.createElement("div");ov.id="winOverlay";
+  var colors=["#f2b01e","#35d07f","#ffffff","#ff5470","#7cc4ff"];
+  var html='<div class="win-burst"><div class="win-title">YOU WIN!</div>'+
+    '<div class="win-amount">+$1.90 USDC</div>'+
+    '<div class="win-sub">$1.90 USDC heads to your wallet shortly</div>'+
+    '<button class="btn win-btn">Collect 🎉</button></div>';
+  for(var i=0;i<90;i++){
+    html+='<div class="confetti" style="left:'+(Math.random()*100).toFixed(2)+'%;background:'+colors[i%colors.length]+
+      ';animation-duration:'+(2.2+Math.random()*2.4).toFixed(2)+'s;animation-delay:'+(Math.random()*0.9).toFixed(2)+
+      's;width:'+(6+Math.random()*7).toFixed(0)+'px;height:'+(10+Math.random()*10).toFixed(0)+'px"></div>';
+  }
+  ov.innerHTML=html;
+  var done=false;
+  function close(){if(done)return;done=true;ov.remove();}
+  ov.addEventListener("click",close);
+  setTimeout(close,6000);
+  document.body.appendChild(ov);
+}
 function showResult(g){
   var box=$("resultBox"),card=$("resultCard");
   var won=g.winner===S.name,lost=g.winner&&!won,draw=g.win_reason==="draw";
@@ -459,6 +492,7 @@ function showResult(g){
     sub+=" · "+g.win_reason;
   box.innerHTML="<h2>"+h+"</h2><p>"+sub+"</p>";
   card.classList.remove("hidden");
+  if(won)celebrateWin(g);
   $("btnResign").classList.add("hidden");
   clearTimeout(S.pollT);
 }
