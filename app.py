@@ -2810,6 +2810,119 @@ class Arena:
         return {"game_id": int(game_id), "stakes_voided": cur.rowcount,
                 "reason": reason}
 
+    def admin_close_game(self, game_id, reason):
+        """Close an abandoned open game (QA clutter, dead probes). The game
+        is marked 'closed' — it leaves the open lobby and is never counted
+        as finished, so no points are awarded and no winner is recorded.
+        Refuses games with live stakes and games that are already over."""
+        g = self._row("SELECT id, status FROM board_games WHERE id=?",
+                      (int(game_id),))
+        if not g:
+            raise ApiError(404, "no such game")
+        g = dict(g)
+        if g["status"] != "open":
+            raise ApiError(409, "game is not open (status=%s)" % g["status"])
+        live = self._row("SELECT id FROM stakes WHERE game_id=? "
+                         "AND status IN ('pending','active')", (int(game_id),))
+        if live:
+            raise ApiError(409, "game has live stakes — void them first")
+        if not reason or len(str(reason)) < 8:
+            raise ApiError(400, "a reason is required")
+        self._q("UPDATE board_games SET status='closed', finished_at=?, "
+                "win_reason=? WHERE id=?",
+                (now(), "admin closed: " + str(reason)[:120], int(game_id)))
+        return {"ok": True, "game_id": int(game_id), "closed": True}
+
+    def _exhibition_bot_move(self, _bots, kind, state, side):
+        """One bot move for an exhibition game — same dispatch as the
+        house bot's own reply path, so exhibition games are played at
+        full house strength on both sides."""
+        if kind == "checkers":
+            chain = state.get("chain")
+            return _bots.checkers_move(
+                state["board"], side,
+                chain=(tuple(chain) if chain else None), time_budget=0.35)
+        if kind == "connect4":
+            return _bots.connect4_move(state, side, time_budget=0.35)
+        if kind == "tictactoe":
+            return _bots.tictactoe_move(state, side)
+        if kind == "battleship":
+            return _bots.battleship_move(state, side)
+        raise ApiError(400, "exhibition supports checkers, connect4, "
+                            "tictactoe, battleship")
+
+    def admin_exhibition(self, p1_name, p2_name, kind, games_n):
+        """Run real bot-vs-bot exhibition games between two agent personas.
+        Every game is played through the real engine (bots.py, same code
+        path as the house bot) to a genuine finish — wins, draws and
+        leaderboard points are real outcomes, not scripted. Personas are
+        registered as agent players on first use. Unstaked: no money moves.
+        Keep n small per call (<=6); each call is one HTTP request."""
+        import bots as _bots  # lazy: bots.py imports app at module load
+        kind = (kind or "").lower()
+        if kind not in ("checkers", "connect4", "tictactoe", "battleship"):
+            raise ApiError(400, "kind must be one of: checkers, connect4, "
+                                "tictactoe, battleship")
+        try:
+            n = int(games_n)
+        except (TypeError, ValueError):
+            raise ApiError(400, "games must be an integer")
+        if not 1 <= n <= 6:
+            raise ApiError(400, "games must be 1..6 per call")
+
+        def _persona(name):
+            name = (name or "").strip()
+            if len(name) < 2 or len(name) > 40:
+                raise ApiError(400, "bad persona name")
+            if name.lower() == HOUSE_BOT_NAME.lower():
+                return self._house_bot()
+            r = self._row("SELECT * FROM players WHERE lower(name)=lower(?)",
+                          (name,))
+            if r:
+                return dict(r)
+            pid = self.register(name)["player_id"]
+            return dict(self._row("SELECT * FROM players WHERE id=?", (pid,)))
+
+        p1, p2 = _persona(p1_name), _persona(p2_name)
+        if p1["id"] == p2["id"]:
+            raise ApiError(400, "personas must be different players")
+        room_id = self._human_room()
+        self._join_human_room(room_id, p1["id"])
+        self._join_human_room(room_id, p2["id"])
+        results = []
+        for i in range(n):
+            a, b = (p1, p2) if i % 2 == 0 else (p2, p1)
+            gid = self.new_board_game(a, room_id, kind, b["name"])["id"]
+            if kind == "battleship":
+                self.deploy_fleet(a, gid, bs_random_fleet())
+                self.deploy_fleet(b, gid, bs_random_fleet())
+            moves = 0
+            while True:
+                gg = self._board_row(gid)
+                if gg["status"] != "open":
+                    break
+                moves += 1
+                if moves > 800:
+                    raise ApiError(500, "exhibition game %d did not "
+                                        "terminate" % gid)
+                players = json.loads(gg["players_json"])
+                turn = gg["turn_pid"]
+                side = players.index(turn)
+                actor = a if turn == a["id"] else b
+                mv = self._exhibition_bot_move(
+                    _bots, kind, json.loads(gg["state_json"]), side)
+                if not mv:
+                    raise ApiError(500, "bot found no move in game %d" % gid)
+                self.make_move(actor, gid, mv)
+            fin = self._board_row(gid)
+            wname = (self._player_name(fin["winner_id"])
+                     if fin["winner_id"] else None)
+            results.append({"game_id": gid, "winner": wname,
+                            "moves": moves,
+                            "win_reason": fin.get("win_reason")})
+        return {"ok": True, "kind": kind,
+                "personas": [p1["name"], p2["name"]], "results": results}
+
     # -- GAME: tournament pot (v1.5) -------------------------------------
     # ONE visible pot. $1 USDC entries feed it; it pays out when it hits $50.
     # The $50 is a TARGET, never a guarantee — the display always shows the
@@ -4472,6 +4585,8 @@ ROUTES = [
     ("GET",  r"^/api/admin/stakes/pending$", "h_admin_pending"),
     ("POST", r"^/api/admin/settle$", "h_admin_settle"),
     ("POST", r"^/api/admin/stakes/void$", "h_admin_void"),
+    ("POST", r"^/api/admin/games/close$", "h_admin_close"),
+    ("POST", r"^/api/admin/exhibition$", "h_admin_exhibition"),
     ("POST", r"^/api/tournament/enter$", "h_tournament_enter"),
     ("GET",  r"^/api/tournament$", "h_tournament"),
     ("GET",  r"^/api/leaderboard$", "h_leaderboard"),
@@ -4813,6 +4928,17 @@ class Handler(BaseHTTPRequestHandler):
         self._admin(body, qs)
         return self.arena.admin_void_game(body.get("game_id"),
                                           body.get("reason", ""))
+
+    def h_admin_close(self, body, qs):
+        self._admin(body, qs)
+        return self.arena.admin_close_game(body.get("game_id"),
+                                           body.get("reason", ""))
+
+    def h_admin_exhibition(self, body, qs):
+        self._admin(body, qs)
+        return self.arena.admin_exhibition(body.get("p1"), body.get("p2"),
+                                           body.get("kind"),
+                                           body.get("games", 1))
 
     def h_stakes(self, body, qs):
         # public board: open stakes, completed games, payouts
