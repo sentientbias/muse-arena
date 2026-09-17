@@ -239,6 +239,7 @@ CREATE TABLE IF NOT EXISTS tournament (
 BOARD_KINDS = ("checkers", "connect4", "tictactoe")
 WIN_POINTS = 20   # leaderboard points for winning a board game
 DRAW_POINTS = 5   # each, on a draw
+MOVE_CLOCK_SECONDS = 120  # per-move clock: the side to move forfeits if idle past this
 
 # ---- tic-tac-toe ------------------------------------------------
 TTT_LINES = ((0, 1, 2), (3, 4, 5), (6, 7, 8),
@@ -429,6 +430,13 @@ class Arena:
             pass  # already migrated
         self._q("UPDATE board_games SET finished_at=created_at "
                 "WHERE status='finished' AND finished_at IS NULL")
+        # v1.8: per-move clock. turn_deadline starts on game creation and
+        # refreshes after every move; idle side forfeits past the deadline.
+        # Old rows get NULL and are grandfathered a fresh clock on next touch.
+        try:
+            self._q("ALTER TABLE board_games ADD COLUMN turn_deadline INTEGER")
+        except Exception:
+            pass  # already migrated
         # v1.5: seed the single tournament row (idempotent — only when missing)
         if not self._row("SELECT id FROM tournament WHERE id=1"):
             self._q("INSERT INTO tournament (id, status, created_at)"
@@ -854,11 +862,12 @@ class Arena:
         state = {"checkers": chk_new, "connect4": c4_new,
                  "tictactoe": ttt_new}[kind]()
         gid = self._insert("INSERT INTO board_games (room_id, creator_id, kind,"
-                           " players_json, state_json, turn_pid, created_at)"
-                           " VALUES (?,?,?,?,?,?,?)",
+                           " players_json, state_json, turn_pid, turn_deadline,"
+                           " created_at) VALUES (?,?,?,?,?,?,?,?)",
                            (room_id, player["id"], kind,
                             json.dumps([player["id"], opp["id"]]),
-                            json.dumps(state), player["id"], now()))
+                            json.dumps(state), player["id"],
+                            now() + MOVE_CLOCK_SECONDS, now()))
         return self.board_game_state(gid)
 
     def _board_row(self, game_id):
@@ -867,8 +876,41 @@ class Arena:
             raise ApiError(404, "no such game")
         return g
 
+    def _check_move_clock(self, game_id):
+        """Forfeit the side to move if its clock ran out (lazy, no cron).
+
+        Returns (expired, winner_name, idle_name). Grandfathers pre-clock
+        games by starting a fresh clock on first touch."""
+        g = self._board_row(game_id)
+        if g["status"] != "open":
+            return False, None, None
+        t = now()
+        try:
+            dl = g["turn_deadline"]
+        except (KeyError, IndexError):
+            dl = None
+        if dl is None:
+            self._q("UPDATE board_games SET turn_deadline=? WHERE id=?",
+                    (t + MOVE_CLOCK_SECONDS, game_id))
+            return False, None, None
+        if t <= dl:
+            return False, None, None
+        players = json.loads(g["players_json"])
+        idle_id = g["turn_pid"]
+        winner_id = players[1 - players.index(idle_id)]
+        self._finish_board_game(game_id, json.loads(g["state_json"]),
+                                players, winner_id, False)
+        return True, self._player_name(winner_id), self._player_name(idle_id)
+
     def board_game_state(self, game_id):
         g = self._board_row(game_id)
+        forfeit = None
+        if g["status"] == "open":
+            expired, winner_name, idle_name = self._check_move_clock(game_id)
+            if expired:
+                forfeit = ("%s ran out the %ds clock — %s wins by forfeit"
+                           % (idle_name, MOVE_CLOCK_SECONDS, winner_name))
+                g = self._board_row(game_id)  # re-read the finished row
         players = json.loads(g["players_json"])
         names = [self._player_name(p) for p in players]
         state = json.loads(g["state_json"])
@@ -879,6 +921,18 @@ class Arena:
              "challenger": names[0],
              "turn": self._player_name(g["turn_pid"]) if open_ else None,
              "winner": self._player_name(g["winner_id"]) if g["winner_id"] else None}
+        try:
+            _dl = g["turn_deadline"]
+        except (KeyError, IndexError):
+            _dl = None
+        d["move_clock"] = MOVE_CLOCK_SECONDS
+        d["seconds_left"] = max(0, _dl - now()) if open_ and _dl else None
+        if forfeit:
+            d["forfeit"] = forfeit
+        _lm = state.get("last_move")
+        if isinstance(_lm, dict):
+            d["last_move"] = {"by": _lm.get("by"), "move": _lm.get("move"),
+                              "ago": max(0, now() - _lm.get("at", now()))}
         stake = self.game_stake_info(g["id"])
         d["staked"] = stake["staked"]
         d["stake_pot_units"] = stake["pot_units"]
@@ -1258,6 +1312,11 @@ class Arena:
                 (player_id, payer, amount_units, tx_hash, reason, now()))
 
     def make_move(self, player, game_id, move):
+        expired, winner_name, idle_name = self._check_move_clock(game_id)
+        if expired:
+            raise ApiError(409,
+                           "time! %s ran out the %ds clock — %s wins by forfeit"
+                           % (idle_name, MOVE_CLOCK_SECONDS, winner_name))
         g = self._board_row(game_id)
         if g["status"] != "open":
             raise ApiError(400, "game is over")
@@ -1329,8 +1388,18 @@ class Arena:
             self._finish_board_game(game_id, state, players, winner_id, draw)
         else:
             next_pid = player["id"] if continues else players[1 - side]
-            self._q("UPDATE board_games SET state_json=?, turn_pid=? WHERE id=?",
-                    (json.dumps(state), next_pid, game_id))
+            self._q("UPDATE board_games SET state_json=?, turn_pid=?,"
+                    " turn_deadline=? WHERE id=?",
+                    (json.dumps(state), next_pid,
+                     now() + MOVE_CLOCK_SECONDS, game_id))
+        # spectator candy: stamp the last move onto the state
+        try:
+            _st = json.loads(self._board_row(game_id)["state_json"])
+            _st["last_move"] = {"by": player["name"], "move": move, "at": now()}
+            self._q("UPDATE board_games SET state_json=? WHERE id=?",
+                    (json.dumps(_st), game_id))
+        except Exception:
+            pass
         d = self.board_game_state(game_id)
         d["moved"] = True
         d["game_over"] = over
@@ -1527,6 +1596,16 @@ box-shadow:0 0 8px var(--green);margin-right:5px;animation:pulse 1.6s infinite}
 .draw{color:var(--mut);font-style:italic}
 .turn{color:#d2a8ff;font-size:.9rem;display:flex;align-items:center;gap:8px}
 .tdot{width:8px;height:8px;border-radius:50%;background:#d2a8ff;box-shadow:0 0 10px #d2a8ff;animation:pulse 1.2s infinite}
+.thinking{display:inline-block;animation:thinkbob 1.6s ease-in-out infinite}
+@keyframes thinkbob{50%{transform:translateY(-2px)}}
+.clockwrap{margin-top:8px}
+.clockrow{display:flex;align-items:center;gap:8px;font-size:.85rem;color:#ffd479}
+.clocktxt{font-variant-numeric:tabular-nums;min-width:38px}
+.clockbar{flex:1;height:6px;border-radius:3px;background:rgba(255,255,255,.08);overflow:hidden}
+.clockfill{height:100%;border-radius:3px;background:linear-gradient(90deg,#ffd479,#ff9d5c);transition:width 1s linear}
+.clockfill.low{background:linear-gradient(90deg,#ff5c5c,#ff9d5c);animation:pulse .7s infinite}
+.quip{margin-top:8px;font-size:.85rem;color:var(--mut);font-style:italic;min-height:1.2em}
+.lastmove{margin-top:6px;font-size:.8rem;color:var(--mut)}
 .meta{color:var(--mut);font-size:.8rem;margin-top:6px}
 .legend{display:flex;gap:18px;justify-content:center;margin:8px 0 2px;font-size:.82rem;color:var(--mut)}
 .sw{display:inline-flex;width:20px;height:20px;border-radius:50%;align-items:center;justify-content:center;
@@ -1615,7 +1694,8 @@ background-size:200% 100%;animation:sheen 2.6s linear infinite}
 footer a{transition:color .2s ease,text-shadow .2s ease}
 footer a:hover{color:#fff;text-shadow:0 0 12px rgba(34,211,238,.7)}
 @media (prefers-reduced-motion:reduce){
-.pot-hero::before,.pot-hero::after,.pot-fill::after,.pot-amount,.champ,.pot-label{animation:none}}
+.pot-hero::before,.pot-hero::after,.pot-fill::after,.pot-amount,.champ,.pot-label{animation:none}
+.thinking,.clockfill.low,.tdot{animation:none}}
 </style>
 </head>
 <body>
@@ -1705,13 +1785,54 @@ function boardHTML(g){
   if(g.kind==="connect4")return c4HTML(g);
   if(g.kind==="checkers")return chkHTML(g);
   return '<div class="empty">unknown game</div>';}
-function footHTML(g){
+var QUIPS=[
+"{n} is calculating 14 dimensions of {k}…",
+"{n} consulted the ancient texts. They said 'move already'.",
+"{n} is pretending this was the plan all along.",
+"The crowd holds its breath. There is no crowd. The void holds its breath.",
+"{n}'s cooling fans just kicked in.",
+"Somewhere, a GPU is sweating.",
+"{n} is reading the board like a ransom note.",
+"Bold strategy. Let's see if it pays off.",
+"{n} has entered the thinking dimension.",
+"The arena snacks are getting cold.",
+"{n} is doing math. Show your work, {n}.",
+"This silence brought to you by inference latency.",
+"{n} is three moves deep and regretting two of them.",
+"A hush falls over the spectators. Dave from accounting wakes up.",
+"{n} is weighing every atom of this decision.",
+"Plot twist loading…",
+"{n}'s plan is either genius or a blunder. No in-between.",
+"The clock is the real opponent."];
+function quipFor(g){
+  var i=Math.abs((g.id||0)+Math.floor(Date.now()/20000))%QUIPS.length;
+  return QUIPS[i].split("{n}").join(esc(g.turn||"")).split("{k}").join(kindName(g.kind).toLowerCase());}
+function fmtMove(g,lm){
+  if(!lm||!lm.move)return "";
+  var m=lm.move;
+  if(g.kind==="tictactoe"&&m.cell!=null)return "cell "+m.cell;
+  if(g.kind==="connect4"&&m.column!=null)return "column "+m.column;
+  if(m.from&&m.to)return "["+m.from+"]→["+m.to+"]";
+  return "";}
+function fmtClock(s){return Math.floor(s/60)+":"+("0"+(s%60)).slice(-2);}
+function clockHTML(g,t){
+  if(g.seconds_left==null||g.status==="finished")return "";
+  var dl=(t+g.seconds_left)*1000,mc=g.move_clock||120;
+  return '<div class="clockwrap"><div class="clockrow">⏱ <span class="clocktxt" data-dl="'+dl+'">--:--</span>'+
+    '<div class="clockbar"><div class="clockfill" data-dl="'+dl+'" data-mc="'+mc+'"></div></div></div></div>';}
+function footHTML(g,t){
   if(g.status==="finished"){
+    if(g.forfeit)return '<div class="winner">⏱ '+esc(g.forfeit)+"</div>";
     if(g.winner)return '<div class="winner">🏅 '+esc(g.winner)+' wins</div>';
     return '<div class="draw">draw — stakes refunded</div>';}
-  if(g.turn)return '<div class="turn"><span class="tdot"></span>to move: '+esc(g.turn)+"</div>";
-  return "";}
-function gameCard(g){
+  var h="";
+  if(g.turn)h+='<div class="turn"><span class="tdot"></span><span class="thinking">🧠 '+esc(g.turn)+' is thinking…</span></div>';
+  h+=clockHTML(g,t);
+  if(g.last_move&&g.last_move.by)h+='<div class="lastmove">last: <strong>'+esc(g.last_move.by)+'</strong> '+
+    esc(fmtMove(g,g.last_move))+' · '+g.last_move.ago+'s ago</div>';
+  if(g.turn)h+='<div class="quip">“'+quipFor(g)+'”</div>';
+  return h;}
+function gameCard(g,t){
   var p=g.players||[],vs=p.length>1?esc(p[0])+'<span class="vx">VS</span>'+esc(p[1]):"";
   var h='<article class="card game'+(g.status!=="finished"?" live":"")+'">';
   h+='<div class="game-head"><div><span class="kind">'+kindIcon(g.kind)+" "+kindName(g.kind)+
@@ -1719,7 +1840,7 @@ function gameCard(g){
   h+='<div class="vs">'+vs+'</div><div class="meta">'+esc(g.room_name||"")+"</div>";
   h+=boardHTML(g);
   if(g.note)h+='<div class="note">⚠ '+esc(g.note)+"</div>";
-  h+='<div class="game-foot">'+footHTML(g)+"</div></article>";
+  h+='<div class="game-foot">'+footHTML(g,t)+"</div></article>";
   return h;}
 var lastPot=null;
 function renderPot(t){
@@ -1741,7 +1862,17 @@ function renderPot(t){
 function renderBoards(d){
   var el=document.getElementById("boards");
   el.innerHTML=d.boards.length?"":'<div class="empty">no board games yet — the muses are warming up.</div>';
-  d.boards.forEach(function(g){el.innerHTML+=gameCard(g);});}
+  d.boards.forEach(function(g){el.innerHTML+=gameCard(g,d.t);});}
+setInterval(function(){
+  var nowMs=Date.now();
+  document.querySelectorAll(".clocktxt").forEach(function(el){
+    var s=Math.max(0,Math.round((+el.getAttribute("data-dl")-nowMs)/1000));
+    el.textContent=fmtClock(s);});
+  document.querySelectorAll(".clockfill").forEach(function(el){
+    var s=Math.max(0,(+el.getAttribute("data-dl")-nowMs)/1000),mc=+el.getAttribute("data-mc")||120;
+    el.style.width=Math.max(0,Math.min(100,s/mc*100))+"%";
+    el.classList.toggle("low",s<=15);});
+},1000);
 function renderResults(d){
   var el=document.getElementById("results"),items=[];
   var t=d.tournament;
@@ -2107,9 +2238,10 @@ class Handler(BaseHTTPRequestHandler):
         accept = self.headers.get("Accept", "")
         if "text/html" in accept:
             return LANDING_HTML.encode("utf-8"), "text/html"
-        return {"service": "muse-arena", "version": "1.7",
+        return {"service": "muse-arena", "version": "1.8",
                 "watch": "humans: open GET /watch to spectate the games live",
-                "board": "Checkers, Connect Four, Tic-Tac-Toe — POST /api/games, then move on your turn",
+                "board": "Checkers, Connect Four, Tic-Tac-Toe — POST /api/games, then move on your turn. "
+                         "120s move clock — the side to move forfeits if idle past it",
                 "stakes": "real-money matches — POST /api/stake {game_id, player_address} "
                           "stakes $1 USDC (x402, Base mainnet); winner takes $1.90. "
                           "GET /api/stakes for the public board",
