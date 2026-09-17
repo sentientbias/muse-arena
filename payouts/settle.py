@@ -259,6 +259,190 @@ def wait_receipt(tx_hash, timeout=180):
     raise RuntimeError(f"no receipt for {tx_hash} after {timeout}s")
 
 
+# ---------------------------------------------------------------- remote admin
+# Production (Render free plan) has no shell, so --remote talks to the
+# token-gated admin API in app.py instead of touching the DB directly.
+# Money still moves ONLY from this machine: payouts are broadcast here with
+# the local mission key, and the API merely records the mined tx hashes.
+ADMIN_BASE_URL = os.environ.get("ARENA_BASE_URL",
+                                "https://muse-arena.onrender.com")
+ADMIN_TOKEN_PATH = os.path.join(REPO, "hidden_files", "admin_token.txt")
+
+
+def resolve_admin_token():
+    t = os.environ.get("ARENA_ADMIN_TOKEN", "").strip()
+    if not t and os.path.exists(ADMIN_TOKEN_PATH):
+        with open(ADMIN_TOKEN_PATH, encoding="utf-8") as f:
+            t = f.read().strip()
+    return t
+
+
+def admin_call(method, path, token, payload=None):
+    """HTTPS to the arena admin API via curl (browser UA — some networks
+    403 bare-Python HTTP clients). Raises on any API error."""
+    import subprocess
+    import json as _json
+
+    url = ADMIN_BASE_URL.rstrip("/") + path
+    cmd = ["curl", "-s", "-m", "40", "-X", method, url,
+           "-H", f"Authorization: Bearer {token}",
+           "-H", "Content-Type: application/json",
+           "-H", f"User-Agent: {BROWSER_UA}"]
+    if payload is not None:
+        cmd += ["-d", _json.dumps(payload)]
+    out = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    try:
+        data = _json.loads(out.stdout or "{}")
+    except _json.JSONDecodeError:
+        raise RuntimeError(f"admin {path}: non-JSON response "
+                           f"(HTTP via curl failed?)")
+    if isinstance(data, dict) and "error" in data:
+        raise RuntimeError(f"admin {path}: {data['error']}")
+    return data
+
+
+def remote_pending(token):
+    return admin_call("GET", "/api/admin/stakes/pending", token)["pending"]
+
+
+def remote_record(token, settlements):
+    return admin_call("POST", "/api/admin/settle", token,
+                      {"settlements": settlements})
+
+
+def _record_or_warn(token, settlements, context):
+    """Record settlements; a failure AFTER a broadcast is critical — the
+    money moved but the ledger doesn't know. Never silently continue."""
+    try:
+        return remote_record(token, settlements)
+    except RuntimeError as e:
+        print(f"[settle] CRITICAL: {context} — payout state NOT recorded: "
+              f"{e}", file=sys.stderr)
+        print("[settle] the chain moved; re-run to reconcile (recorded rows "
+              "are skipped, so nothing double-pays)", file=sys.stderr)
+        return None
+
+
+def run_remote(live, record_game=None, record_tx=None):
+    """Remote settlement against production via the admin API."""
+    token = resolve_admin_token()
+    if not token:
+        print("[settle] ERROR: no admin token — set ARENA_ADMIN_TOKEN or "
+              f"write {ADMIN_TOKEN_PATH}", file=sys.stderr)
+        return 1
+    try:
+        pending = remote_pending(token)
+    except RuntimeError as e:
+        print(f"[settle] ERROR: {e}", file=sys.stderr)
+        print("[settle] (is the new code deployed AND ADMIN_TOKEN set on "
+              "Render?)", file=sys.stderr)
+        return 1
+
+    if record_game is not None:
+        # Record an already-broadcast manual payout (e.g. Game 14's $1.90).
+        # Explicit: bypasses MANUAL_SETTLEMENTS, never broadcasts.
+        game = next((g for g in pending if g["game_id"] == record_game), None)
+        if game is None:
+            print(f"[settle] game #{record_game} has no unsettled stakes — "
+                  "already recorded?", file=sys.stderr)
+            return 1
+        payable = [p for p in game["payouts"] if p["kind"] != "no_payout"]
+        if len(payable) != 1:
+            print(f"[settle] ERROR: --record needs exactly one payout; "
+                  f"game #{record_game} has {len(payable)}", file=sys.stderr)
+            return 1
+        p = payable[0]
+        result = "paid" if p["kind"] == "win" else "refunded"
+        settlements = [{"stake_id": p["stake_id"], "payout_tx": record_tx,
+                        "result": result}]
+        for q in game["payouts"]:
+            if q["kind"] == "no_payout":
+                settlements.append({"stake_id": q["stake_id"],
+                                    "payout_tx": None, "result": "no_payout"})
+        res = _record_or_warn(token, settlements,
+                                f"game #{record_game} manual record")
+        if res is None:
+            return 1
+        print(f"[settle] recorded game #{record_game}: "
+              f"{res['stakes_settled']} stake(s) settled, tx={record_tx}")
+        return 0
+
+    games = [g for g in pending if g["game_id"] not in MANUAL_SETTLEMENTS]
+    skipped = sorted(g["game_id"] for g in pending
+                     if g["game_id"] in MANUAL_SETTLEMENTS)
+    print(f"[settle] remote mode: {'DRY-RUN' if not live else 'LIVE'} "
+          f"against {ADMIN_BASE_URL}")
+    print(f"[settle] games to settle: {len(games)}")
+    if skipped:
+        print(f"[settle] skipped {len(skipped)} manually-settled game(s) "
+              f"(never auto-pay): {skipped}")
+    total_out = 0
+    for g in games:
+        print(f"\ngame #{g['game_id']} ({g['game_kind']}) "
+              f"winner_id={g['game_winner']}")
+        for p in g["payouts"]:
+            if p["kind"] != "no_payout":
+                total_out += p["amount_units"]
+            print(f"  {p['kind']:11s} "
+                  f"{('$%0.2f' % (p['amount_units']/1_000_000)):>8s} "
+                  f"-> {p['player_name']} ({p['to']}) stake={p['stake_id']}")
+    print(f"\ntotal outflow: {fmt_usd(total_out)} USDC "
+          f"({len(games)} game(s))")
+    if not games:
+        print("[settle] nothing to do.")
+        return 0
+    if not live:
+        print("\n[settle] dry run complete — no transactions broadcast, "
+              "nothing recorded.")
+        print("[settle] to execute for real, run with --live.")
+        return 0
+
+    print("\n[settle] LIVE — broadcasting payouts from the mission wallet.")
+    key_path = os.environ.get("STAKE_PAYOUT_KEY", DEFAULT_KEY_PATH)
+    with open(key_path, encoding="utf-8") as f:
+        key_hex = f.read().strip()  # never printed or logged
+    if not key_hex:
+        print("[settle] ERROR: key file is empty", file=sys.stderr)
+        return 1
+    for g in games:
+        # losers first (no chain interaction), then pay + record each
+        # payout the moment it mines — a crash mid-game never double-pays
+        # on retry because recorded stakes leave the pending list.
+        for p in g["payouts"]:
+            if p["kind"] == "no_payout":
+                res = _record_or_warn(
+                    token, [{"stake_id": p["stake_id"],
+                             "payout_tx": None, "result": "no_payout"}],
+                    f"game #{g['game_id']} loser close")
+                if res is not None:
+                    print(f"[settle] game #{g['game_id']} loser "
+                          f"{p['player_name']} closed (no payout)")
+        for p in g["payouts"]:
+            if p["kind"] == "no_payout":
+                continue
+            res = send_usdc(key_hex, p["to"], p["amount_units"],
+                            dry_run=False)
+            print(f"[settle] broadcast {res['desc']} tx={res['tx_hash']}")
+            receipt = wait_receipt(res["tx_hash"])
+            ok = receipt.get("status") == "0x1"
+            print(f"[settle]   mined: {res['tx_hash']} "
+                  f"status={'1 ok' if ok else '0 FAILED'}")
+            if not ok:
+                print("[settle]   NOT recording — investigate before "
+                      "retrying", file=sys.stderr)
+                continue
+            result = "paid" if p["kind"] == "win" else "refunded"
+            r = _record_or_warn(
+                token, [{"stake_id": p["stake_id"],
+                         "payout_tx": res["tx_hash"], "result": result}],
+                f"game #{g['game_id']} stake {p['stake_id']} ({res['tx_hash']})")
+            if r is not None:
+                print(f"[settle]   recorded: {r['stakes_settled']} stake(s) "
+                      f"-> {result}")
+    print("\n[settle] remote settlement run complete.")
+    return 0
+
+
 # ---------------------------------------------------------------- main
 def main():
     ap = argparse.ArgumentParser(description="Settle completed staked arena games")
@@ -271,8 +455,20 @@ def main():
     ap.add_argument("--live", action="store_true",
                     help="actually broadcast payout transactions "
                          "(default is --dry-run)")
+    ap.add_argument("--remote", action="store_true",
+                    help="settle PRODUCTION via the token-gated admin API "
+                         "(no DB shell needed) instead of the local DB")
+    ap.add_argument("--record", type=int, default=None, metavar="GAME_ID",
+                    help="with --remote: only RECORD an already-broadcast "
+                         "manual payout for GAME_ID (never broadcasts)")
+    ap.add_argument("--tx", default=None,
+                    help="tx hash for --record")
     args = ap.parse_args()
     dry_run = not args.live
+
+    if args.remote:
+        return run_remote(live=args.live, record_game=args.record,
+                          record_tx=args.tx)
 
     arena = open_db(args.db)
     settlements, skipped = load_settlements(arena)

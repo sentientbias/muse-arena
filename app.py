@@ -20,7 +20,7 @@ v1.3 ships:
 Auth: token issued at registration, passed as "token" in every JSON body
 (or ?token= query param). v1 trusts the LAN; v2 should sign requests.
 """
-import argparse, hashlib, json, os, random, re, secrets, sqlite3, sys, threading, time
+import argparse, hashlib, hmac, json, os, random, re, secrets, sqlite3, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -988,6 +988,89 @@ class Arena:
             " JOIN board_games b ON b.id=s.game_id"
             " ORDER BY s.created_at DESC LIMIT 100")]
 
+    # -- settlement ops (v1.6) — token-gated admin API ------------------
+    # The offline payout script can only reach production through these
+    # endpoints (Render's free plan has no shell/one-off jobs). The mission
+    # wallet key NEVER touches the server: this API only READS unsettled
+    # payouts and RECORDS settlement tx hashes after the script broadcasts
+    # them from its own machine.
+    WINNER_PAYOUT_UNITS = 1900000  # $1.90 — the other $0.10 is house rake
+
+    def admin_pending(self):
+        """Finished games whose stakes were never settled, grouped by game,
+        with the exact payouts the script should broadcast. Payouts carry
+        their stake_id; stakes with no payout (losers) are marked
+        kind='no_payout' so the script can close them without paying."""
+        rows = self._rows(
+            "SELECT s.game_id, b.kind AS game_kind, b.status AS game_status,"
+            " b.winner_id AS game_winner, s.id AS stake_id, s.player_id,"
+            " p.name AS player_name, s.player_address, s.amount_units,"
+            " s.stake_tx, s.created_at"
+            " FROM stakes s JOIN players p ON p.id=s.player_id"
+            " JOIN board_games b ON b.id=s.game_id"
+            " WHERE s.status='complete' AND s.payout_tx IS NULL"
+            " ORDER BY s.game_id, s.created_at")
+        games = {}
+        for r in rows:
+            r = dict(r)
+            g = games.setdefault(r["game_id"], {
+                "game_id": r["game_id"], "game_kind": r["game_kind"],
+                "game_status": r["game_status"],
+                "game_winner": r["game_winner"], "stakes": []})
+            g["stakes"].append({k: r[k] for k in (
+                "stake_id", "player_id", "player_name", "player_address",
+                "amount_units", "stake_tx", "created_at")})
+        out = []
+        for gid, g in games.items():
+            gw = g["game_winner"]
+            payouts = []
+            for s in g["stakes"]:
+                if len(g["stakes"]) == 1:
+                    amt, kind = s["amount_units"], "refund"  # solo stake: 1:1
+                elif gw is None:
+                    amt, kind = s["amount_units"], "draw_refund"
+                elif s["player_id"] == gw:
+                    amt, kind = self.WINNER_PAYOUT_UNITS, "win"
+                else:
+                    amt, kind = 0, "no_payout"  # loser: closed, never paid
+                payouts.append({
+                    "stake_id": s["stake_id"],
+                    "player_id": s["player_id"],
+                    "player_name": s["player_name"],
+                    "to": s["player_address"],
+                    "amount_units": amt, "kind": kind})
+            g["payouts"] = payouts
+            out.append(g)
+        return out
+
+    def admin_record_settlement(self, settlements):
+        """Record per-stake settlement AFTER the offline script broadcast the
+        payouts from its own machine. Idempotent: rows already settled are
+        never touched, so a retried run can never double-record (and the
+        script only pays rows still listed by admin_pending)."""
+        if not isinstance(settlements, list) or not settlements:
+            raise ApiError(400, "settlements must be a non-empty list")
+        n = 0
+        for s in settlements:
+            sid = int(s["stake_id"])
+            tx = s.get("payout_tx")
+            result = s.get("result", "settled")
+            if result not in ("paid", "refunded", "no_payout", "settled"):
+                raise ApiError(400, f"bad result for stake {sid}")
+            if tx is not None and not (
+                    isinstance(tx, str) and tx.startswith("0x")
+                    and len(tx) == 66):
+                raise ApiError(400, f"bad payout_tx for stake {sid}")
+            if tx is None and result != "no_payout":
+                raise ApiError(400,
+                               f"stake {sid}: payout_tx required unless no_payout")
+            cur = self._q(
+                "UPDATE stakes SET status=?, payout_tx=? "
+                "WHERE id=? AND status='complete' AND payout_tx IS NULL",
+                (result, tx, sid))
+            n += cur.rowcount
+        return {"stakes_settled": n}
+
     # -- GAME: tournament pot (v1.5) -------------------------------------
     # ONE visible pot. $1 USDC entries feed it; it pays out when it hits $50.
     # The $50 is a TARGET, never a guarantee — the display always shows the
@@ -1455,6 +1538,8 @@ ROUTES = [
     ("POST", r"^/api/games/(\d+)/resign$", "h_resign"),
     ("POST", r"^/api/stake$", "h_stake"),
     ("GET",  r"^/api/stakes$", "h_stakes"),
+    ("GET",  r"^/api/admin/stakes/pending$", "h_admin_pending"),
+    ("POST", r"^/api/admin/settle$", "h_admin_settle"),
     ("POST", r"^/api/tournament/enter$", "h_tournament_enter"),
     ("GET",  r"^/api/tournament$", "h_tournament"),
     ("GET",  r"^/api/leaderboard$", "h_leaderboard"),
@@ -1549,7 +1634,9 @@ class Handler(BaseHTTPRequestHandler):
     def h_ping(self, body, qs):
         # keep-awake probe: deliberately touches NO database, so the free
         # Postgres stays scaled-to-zero while the web service stays warm.
-        return {"ok": True, "service": "muse-arena", "t": now()}
+        # build lets ops verify WHICH commit is actually deployed.
+        return {"ok": True, "service": "muse-arena", "t": now(),
+                "build": os.environ.get("RENDER_GIT_COMMIT", "dev")[:12]}
 
     def h_index(self, body, qs):
         return {"service": "muse-arena", "version": "1.5",
@@ -1725,6 +1812,26 @@ class Handler(BaseHTTPRequestHandler):
                      "stake recorded — game goes live when both players stake"),
         }
         return out, "application/json", 200, resp_headers
+
+    def _admin(self, body, qs):
+        """Gate for the settlement admin endpoints. ADMIN_TOKEN lives only in
+        the Render env — never in the repo, never in a build."""
+        auth = self.headers.get("Authorization", "")
+        token = (auth[7:] if auth.lower().startswith("bearer ") else "") \
+            or (qs.get("admin_token", [None])[0] or "") \
+            or body.get("admin_token", "")
+        expected = os.environ.get("ADMIN_TOKEN", "")
+        if not expected or not token \
+                or not hmac.compare_digest(str(token), expected):
+            raise ApiError(403, "admin only")
+
+    def h_admin_pending(self, body, qs):
+        self._admin(body, qs)
+        return {"pending": self.arena.admin_pending()}
+
+    def h_admin_settle(self, body, qs):
+        self._admin(body, qs)
+        return self.arena.admin_record_settlement(body.get("settlements"))
 
     def h_stakes(self, body, qs):
         # public board: open stakes, completed games, payouts
