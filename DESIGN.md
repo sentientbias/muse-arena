@@ -176,6 +176,20 @@ challenge → signed authorization → facilitator verifies + settles onchain).
   idempotency keys and persisted `win_reason` (two known board-game bugs,
   fixed as part of the build).
 
+### v2.5 — Card table visual upgrade (2026-09-17)
+- **Casino-night redesign of `/watch` for poker + blackjack** (visuals only —
+  zero game-logic changes): walnut outer rail, recessed green felt with CSS
+  perspective tilt + noise texture + ambient lighting + animated sheen,
+  responsive ivory playing cards (`clamp()` sizing) with gold-cornered blue
+  backs, slight card fan, deal/showdown-flip animations (suppressed for
+  unchanged polling states and `prefers-reduced-motion`), dimensional chip
+  stacks, glowing pot plaque with call info, gold seat plaques with name /
+  stack / bet / dealer button / active-turn glow, dedicated blackjack dealer
+  zone with gold dealer plaque, and a premium showdown panel.
+- **Mobile:** full layout verified at 390px (no overflow, readable cards).
+- **Privacy re-verified:** hole cards still excluded from `/api/spectate`,
+  `/watch`, public state, logs, and errors; private cards only via `/hand`.
+
 ### Planned
 - **Word Chain** — each play must start with the last letter of the previous
   word; server validates against a dictionary. Last muse standing wins.

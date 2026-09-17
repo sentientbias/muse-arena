@@ -2704,7 +2704,7 @@ box-shadow:0 5px 12px rgba(0,0,0,.65),0 0 18px rgba(251,191,36,.55),inset 0 3px 
 @keyframes piecepop{0%{transform:scale(.4)}100%{transform:scale(1)}}
 /* entrance animations replay only when the board state actually changed */
 .noanim .ttt-cell.lm.x,.noanim .ttt-cell.lm.o,.noanim .lm .disc,.noanim .lm .piece,
-.noanim .chk-cell.lm::after{animation:none}
+.noanim .chk-cell.lm::after,.noanim .pcard,.noanim .sdshow .pcard,.noanim .felt::before{animation:none}
 /* ---- leaderboard / feed / rooms ---- */
 .score-row{display:flex;justify-content:space-between;align-items:center;padding:9px 2px;
 border-top:1px solid #1a2440;font-size:.92rem}
@@ -2764,38 +2764,108 @@ footer a:hover{color:#fff;text-shadow:0 0 12px rgba(34,211,238,.7)}
 @media (prefers-reduced-motion:reduce){
 .pot-hero::before,.pot-hero::after,.pot-fill::after,.pot-amount,.champ,.pot-label{animation:none}
 .thinking,.clockfill.low,.tdot{animation:none}
-.ttt-cell.lm,.lm .disc,.lm .piece,.chk-cell.lm::after,.pcard,.reveal .pcard{animation:none}}
-/* ---- v2.0 card tables: poker + blackjack (2.5D card language) ---- */
-.cardtable{position:relative;max-width:430px;margin:14px auto;padding:16px 12px 12px;border-radius:18px;
-background:linear-gradient(150deg,#1e6039,#0c3820 72%);border:1px solid #2f7a4d;
-box-shadow:0 14px 34px rgba(0,0,0,.6),inset 0 2px 5px rgba(190,255,205,.16),inset 0 -8px 14px rgba(0,0,0,.5)}
-.cardtable::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;opacity:.14;mix-blend-mode:overlay;
+.ttt-cell.lm,.lm .disc,.lm .piece,.chk-cell.lm::after,.pcard,.reveal .pcard,.felt::before,.sdshow .pcard{animation:none}}
+/* ---- v2.5 card tables: casino-night 2.5D ---- */
+.cardtable{position:relative;max-width:460px;margin:16px auto;padding:22px 16px 16px;border-radius:28px;
+background:linear-gradient(145deg,#96632f 0%,#6b4423 28%,#422712 58%,#754a24 100%);
+border:1px solid #241304;
+box-shadow:0 20px 48px rgba(0,0,0,.68),inset 0 2px 5px rgba(255,222,160,.4),inset 0 -7px 14px rgba(0,0,0,.6);
+perspective:1100px}
+.cardtable::before{content:"";position:absolute;inset:10px;border-radius:20px;pointer-events:none;
+border:2px solid rgba(251,191,36,.45);box-shadow:0 0 16px rgba(251,191,36,.22),inset 0 0 12px rgba(251,191,36,.12)}
+.felt{position:relative;border-radius:16px;padding:14px 10px 12px;transform:rotateX(7deg);transform-origin:50% 0%;
+background:
+ radial-gradient(ellipse 95% 75% at 50% 16%,rgba(255,246,205,.13),transparent 62%),
+ radial-gradient(ellipse 130% 105% at 50% -10%,#2e8a4c 0%,#1a6b36 36%,#0e4423 70%,#072a16 100%);
+box-shadow:inset 0 5px 20px rgba(0,0,0,.6),inset 0 -3px 10px rgba(0,0,0,.5),0 1px 0 rgba(255,222,160,.28)}
+.felt::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;opacity:.15;mix-blend-mode:overlay;
 background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='0.6'/%3E%3C/svg%3E")}
-.pclabel{font-size:.7rem;letter-spacing:.22em;color:#bfe9c9;font-weight:700;text-align:center;margin:8px 0 4px}
-.prow{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin:6px 0;position:relative;z-index:1}
-.pcard{width:50px;height:72px;border-radius:8px;position:relative;flex:0 0 auto;
-background:linear-gradient(160deg,#fffdf6,#e8e0cb);
-box-shadow:0 4px 10px rgba(0,0,0,.55),inset 0 0 0 1px rgba(120,90,40,.35),inset 0 2px 3px rgba(255,255,255,.75);
-color:#191919;font-weight:800;animation:cardin .45s ease}
-.pcard.red{color:#bf232a}
-.pcard .cnr{position:absolute;font-size:.8rem;line-height:1.15;text-align:center}
-.pcard .cnr.tl{top:4px;left:5px}
-.pcard .cnr.br{bottom:4px;right:5px;transform:rotate(180deg)}
-.pcard .pip{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:1.65rem}
-.pcard.back{background:linear-gradient(150deg,#24449b,#101f5e);
-box-shadow:0 4px 10px rgba(0,0,0,.55),inset 0 0 0 2px rgba(251,191,36,.55),inset 0 0 20px rgba(0,0,0,.5)}
-.pcard.back .pip{color:#fbbf24;font-size:1.25rem;text-shadow:0 0 8px rgba(251,191,36,.6)}
-@keyframes cardin{0%{transform:translateY(-18px) rotate(-4deg);opacity:0}100%{transform:none;opacity:1}}
-.reveal .pcard{animation:cardflip .55s ease}
+.felt::before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:0;
+background:linear-gradient(115deg,transparent 42%,rgba(255,250,220,.07) 50%,transparent 58%);
+background-size:250% 100%;animation:feltsheen 7s ease-in-out infinite}
+@keyframes feltsheen{0%,100%{background-position:120% 0}50%{background-position:-20% 0}}
+.pclabel{font-size:.68rem;letter-spacing:.24em;color:#cdeecb;font-weight:700;text-align:center;margin:8px 0 5px;
+text-shadow:0 1px 3px rgba(0,0,0,.7);position:relative;z-index:1}
+.prow{display:flex;gap:9px;justify-content:center;flex-wrap:wrap;margin:7px 0;position:relative;z-index:1}
+.zone{margin:8px auto;padding:10px 8px 8px;border-radius:14px;max-width:370px;position:relative;z-index:1;
+background:rgba(0,0,0,.28);border:1px solid rgba(251,191,36,.28);
+box-shadow:inset 0 3px 12px rgba(0,0,0,.5),0 1px 0 rgba(255,235,180,.12)}
+.zone .pclabel{margin-top:0}
+.dealerplaque{display:inline-block;padding:3px 16px;border-radius:999px;font-size:.68rem;font-weight:800;letter-spacing:.28em;
+color:#3a2a08;background:linear-gradient(160deg,#ffe9a8,#d4a017);
+box-shadow:0 3px 10px rgba(0,0,0,.55),0 0 14px rgba(251,191,36,.45),inset 0 1px 2px rgba(255,255,255,.7)}
+.pcard{--cw:clamp(46px,12.5vw,62px);width:var(--cw);height:calc(var(--cw)*1.42);border-radius:calc(var(--cw)*.14);
+position:relative;flex:0 0 auto;color:#1b1b1b;font-weight:800;
+background:linear-gradient(155deg,#fffef9 0%,#f7f1df 55%,#e9dfc2 100%);
+box-shadow:0 6px 14px rgba(0,0,0,.6),0 1px 2px rgba(0,0,0,.5),
+ inset 0 0 0 1px rgba(150,110,40,.4),inset 0 0 0 4px rgba(255,255,255,.5),inset 0 2px 4px rgba(255,255,255,.8)}
+.pcard.red{color:#c0272d}
+.pcard .cnr{position:absolute;font-size:calc(var(--cw)*.26);line-height:1.12;text-align:center;font-weight:800}
+.pcard .cnr.tl{top:6%;left:8%}
+.pcard .cnr.br{bottom:6%;right:8%;transform:rotate(180deg)}
+.pcard .pip{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:calc(var(--cw)*.62);
+text-shadow:0 2px 3px rgba(0,0,0,.18)}
+.prow .pcard:nth-child(4n+1){transform:rotate(-2.6deg)}
+.prow .pcard:nth-child(4n+2){transform:rotate(1.8deg) translateY(1px)}
+.prow .pcard:nth-child(4n+3){transform:rotate(-1.2deg) translateY(2px)}
+.prow .pcard:nth-child(4n){transform:rotate(2.8deg)}
+.pcard.back{background:
+ repeating-radial-gradient(circle at 50% 50%,rgba(251,191,36,.14) 0 2px,transparent 2px 8px),
+ linear-gradient(150deg,#2c52a8 0%,#16295f 60%,#0c1840 100%);
+box-shadow:0 6px 14px rgba(0,0,0,.6),0 1px 2px rgba(0,0,0,.5),
+ inset 0 0 0 2px rgba(251,191,36,.7),inset 0 0 0 5px rgba(12,20,50,.9),inset 0 0 24px rgba(0,0,0,.55)}
+.pcard.back .pip{color:#fbbf24;font-size:calc(var(--cw)*.44);text-shadow:0 0 10px rgba(251,191,36,.65)}
+.brender:not(.noanim) .prow .pcard:last-child{animation:cardin .5s cubic-bezier(.2,.9,.3,1.15)}
+.brender:not(.noanim) .sdshow .pcard{animation:cardflip .6s ease}
+@keyframes cardin{0%{transform:translateY(-52px) rotate(-12deg) scale(.9);opacity:0}60%{opacity:1}100%{opacity:1}}
 @keyframes cardflip{0%{transform:rotateY(90deg)}100%{transform:rotateY(0)}}
-.potline{text-align:center;color:#fbbf24;font-weight:800;margin:4px 0;font-variant-numeric:tabular-nums;position:relative;z-index:1}
-.stackline{display:flex;justify-content:center;gap:16px;margin:6px 0;font-size:.82rem;color:#d9f2e2;position:relative;z-index:1;flex-wrap:wrap}
-.stackline b{color:#fbbf24;font-variant-numeric:tabular-nums}
-.stackline .btn{color:#fbbf24;font-weight:700}
-.lastaction{text-align:center;color:#ffe9a8;font-size:.85rem;min-height:1.3em;position:relative;z-index:1}
-.sdshow{margin-top:6px;padding:8px;border-radius:10px;background:rgba(0,0,0,.35);position:relative;z-index:1}
-.sdrow{display:flex;align-items:center;gap:6px;justify-content:center;flex-wrap:wrap;color:#e8f5ec;font-size:.8rem;margin:4px 0}
-.sdrow .who{font-weight:700;color:#fff;min-width:64px;text-align:right}
+.chipstack{position:relative;width:42px;height:34px;flex:0 0 auto;filter:drop-shadow(0 4px 5px rgba(0,0,0,.55))}
+.chip{position:absolute;left:3px;width:36px;height:36px;border-radius:50%;
+background:radial-gradient(circle at 34% 28%,#fff8e0 0%,#f6c945 38%,#c78d12 72%,#7c5200 100%);
+box-shadow:inset 0 2px 3px rgba(255,255,255,.65),inset 0 -4px 6px rgba(90,50,0,.55),inset 0 0 0 2px rgba(120,70,0,.35)}
+.chip::before{content:"";position:absolute;inset:5px;border-radius:50%;border:4px dashed rgba(255,255,255,.92)}
+.chip.c-red{background:radial-gradient(circle at 34% 28%,#ffc9c9 0%,#f05656 38%,#b81f1f 72%,#6d0d0d 100%)}
+.chip.c-blue{background:radial-gradient(circle at 34% 28%,#cfe4ff 0%,#5b9cf6 38%,#1f56c8 72%,#0d2a6d 100%)}
+.chip.c-black{background:radial-gradient(circle at 34% 28%,#d7dbe2 0%,#6b7484 38%,#2c313c 72%,#0c0e13 100%)}
+.chipstack .chip:nth-child(1){bottom:0}
+.chipstack .chip:nth-child(2){bottom:8px}
+.chipstack .chip:nth-child(3){bottom:16px}
+.chipstack .chip:nth-child(4){bottom:24px}
+.potwrap{display:flex;align-items:center;justify-content:center;gap:12px;margin:10px 0;position:relative;z-index:1}
+.potplaque{display:flex;align-items:center;gap:12px;padding:7px 20px 7px 10px;border-radius:999px;
+background:linear-gradient(165deg,#241a06,#0f0b02);border:1px solid rgba(251,191,36,.7);
+box-shadow:0 0 24px rgba(251,191,36,.3),inset 0 1px 3px rgba(251,191,36,.35),inset 0 -3px 6px rgba(0,0,0,.6)}
+.potplaque .cap{font-size:.6rem;letter-spacing:.3em;color:#caa53d;font-weight:800}
+.potplaque .amt{color:#ffd34d;font-weight:800;font-size:1.2rem;font-variant-numeric:tabular-nums;
+text-shadow:0 0 14px rgba(251,191,36,.55)}
+.potplaque .sub{font-size:.68rem;color:#ffe9a8;white-space:nowrap}
+.seat{display:flex;flex-direction:column;align-items:center;margin:9px 0;position:relative;z-index:1}
+.plaque{display:flex;align-items:center;gap:9px;padding:6px 14px 6px 8px;border-radius:12px;margin-top:7px;max-width:100%;
+background:linear-gradient(165deg,rgba(26,18,8,.92),rgba(10,7,3,.94));border:1px solid rgba(212,160,60,.5);
+box-shadow:0 5px 12px rgba(0,0,0,.55),inset 0 1px 2px rgba(255,220,150,.22)}
+.plaque .nm{color:#ffe9b0;font-weight:700;font-size:.84rem;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.plaque .stk{color:#ffd34d;font-weight:800;font-size:.84rem;font-variant-numeric:tabular-nums}
+.plaque .meta{font-size:.68rem;color:#c9b98a;white-space:nowrap}
+.dbtn{width:27px;height:27px;border-radius:50%;flex:0 0 auto;
+background:radial-gradient(circle at 35% 30%,#fffbe8,#ecd9a0 55%,#b3862c 100%);
+color:#3a2a08;font-weight:900;font-size:.68rem;display:flex;align-items:center;justify-content:center;
+box-shadow:0 3px 8px rgba(0,0,0,.6),0 0 12px rgba(251,191,36,.55),inset 0 1px 2px rgba(255,255,255,.8)}
+.seat.active .plaque{border-color:#fbbf24;box-shadow:0 5px 12px rgba(0,0,0,.55),0 0 18px rgba(251,191,36,.4)}
+.lastaction{text-align:center;color:#ffe9a8;font-size:.85rem;min-height:1.4em;position:relative;z-index:1;
+text-shadow:0 1px 3px rgba(0,0,0,.8);padding:0 8px}
+.sdshow{margin:8px auto 2px;padding:10px 8px;border-radius:14px;max-width:390px;position:relative;z-index:1;
+background:linear-gradient(165deg,rgba(30,22,8,.9),rgba(12,9,3,.92));border:1px solid rgba(251,191,36,.55);
+box-shadow:0 0 26px rgba(251,191,36,.22),inset 0 1px 3px rgba(251,191,36,.25)}
+.sdrow{display:flex;align-items:center;gap:7px;justify-content:center;flex-wrap:wrap;color:#f3ead0;font-size:.8rem;margin:6px 0}
+.sdrow .who{font-weight:800;color:#ffd34d;min-width:70px;text-align:right}
+.sdrow .resh{color:#ffe9a8}
+@media (max-width:480px){
+.cardtable{padding:16px 10px 12px;border-radius:22px}
+.felt{transform:rotateX(4deg);padding:10px 6px 8px}
+.plaque .nm{max-width:92px}
+.potplaque .amt{font-size:1.05rem}
+.zone{max-width:100%}
+}
 </style>
 </head>
 <body>
@@ -2903,45 +2973,55 @@ function cardLegend(g,stacks){
   if(p.length<2||!stacks)return legend(g);
   return '<div class="legend"><span>'+esc(p[0])+' · stack <b>'+stacks[p[0]]+"</b></span>"+
          '<span>'+esc(p[1])+' · stack <b>'+stacks[p[1]]+"</b></span></div>";}
+function chipStack(n){
+  var cols=["","c-red","c-blue","c-black"],h='<div class="chipstack">';
+  n=Math.max(1,Math.min(4,n||1));
+  for(var i=0;i<n;i++)h+='<div class="chip '+cols[i%4]+'"></div>';
+  return h+"</div>";}
+function chipCountFor(pot){return pot>400?4:pot>150?3:pot>40?2:1;}
 function pokerHTML(g){
   var p=g.poker;if(!p)return '<div class="empty">table unavailable</div>';
-  var pl=g.players||[],h='<div class="cardtable">';
-  h+='<div class="pclabel">HAND '+p.hand_no+'/'+p.hands_cap+(p.sudden_death?" · SUDDEN DEATH":"")+
-     " · BLINDS "+p.blinds[0]+"/"+p.blinds[1]+"</div>";
-  h+='<div class="pclabel">COMMUNITY · '+esc(String(p.street).toUpperCase())+"</div>";
+  var pl=g.players||[],h='<div class="cardtable"><div class="felt">';
+  h+='<div class="pclabel">\u2660\u2665 HAND '+p.hand_no+'/'+p.hands_cap+(p.sudden_death?" \u00b7 SUDDEN DEATH":"")+
+     " \u00b7 BLINDS "+p.blinds[0]+"/"+p.blinds[1]+" \u2666\u2663</div>";
+  h+='<div class="zone"><div class="pclabel">COMMUNITY \u00b7 '+esc(String(p.street).toUpperCase())+"</div>";
   h+='<div class="prow">'+(p.community.length?p.community.map(cardHTML).join(""):
-    '<span style="color:#8fd0a0;font-size:.8rem">no cards yet</span>')+"</div>";
-  h+='<div class="potline">POT '+p.pot+(p.to_call?" · "+esc(p.to_act)+" to call "+p.to_call:"")+"</div>";
+    '<span style="color:#8fd0a0;font-size:.8rem">no cards yet</span>')+"</div></div>";
+  h+='<div class="potwrap">'+chipStack(chipCountFor(p.pot))+
+     '<div class="potplaque"><div><div class="cap">POT</div><div class="amt">'+p.pot+"</div></div>"+
+     (p.to_call?'<div class="sub">'+esc(p.to_act)+" to call <b>"+p.to_call+"</b></div>":"")+"</div></div>";
   for(var i=0;i<2;i++){
-    var nm=pl[i]||("P"+(i+1));
-    h+='<div class="prow">'+cardHTML(null)+cardHTML(null)+"</div>";
-    h+='<div class="stackline"><span>'+esc(nm)+(p.button===nm?' <span class="btn">●BTN</span>':"")+
-       '</span></div>';
+    var nm=pl[i]||("P"+(i+1)),stk=(p.stacks||{})[nm];
+    h+='<div class="seat'+(g.turn===nm?" active":"")+'"><div class="prow">'+cardHTML(null)+cardHTML(null)+"</div>";
+    h+='<div class="plaque">'+(p.button===nm?'<span class="dbtn">D</span>':"")+
+       '<span class="nm">'+esc(nm)+'</span><span class="stk">'+(stk!=null?stk:"\u2013")+"</span></div></div>";
   }
   if(p.last_action)h+='<div class="lastaction">'+esc(p.last_action)+"</div>";
   if(p.last_hand&&p.last_hand.showdown){
-    h+='<div class="sdshow"><div class="pclabel">SHOWDOWN · HAND '+p.last_hand.hand_no+"</div>";
+    h+='<div class="sdshow"><div class="pclabel">SHOWDOWN \u00b7 HAND '+p.last_hand.hand_no+"</div>";
     p.last_hand.showdown.forEach(function(s){
       h+='<div class="sdrow"><span class="who">'+esc(s.player)+"</span>"+
-         s.cards.map(cardHTML).join("")+'<span> — '+esc(s.hand)+"</span></div>";});
+         s.cards.map(cardHTML).join("")+'<span class="resh"> \u2014 '+esc(s.hand)+"</span></div>";});
     h+="</div>";
   }
-  return h+"</div>"+cardLegend(g,p.stacks);}
+  return h+"</div></div>"+cardLegend(g,p.stacks);}
 function bjHTML(g){
   var b=g.blackjack;if(!b)return '<div class="empty">table unavailable</div>';
-  var pl=g.players||[],h='<div class="cardtable">';
-  h+='<div class="pclabel">HAND '+b.hand_no+"/"+b.hands_total+' · FLAT BET 10 · DEALER STANDS 17</div>';
-  h+='<div class="pclabel">DEALER'+(b.dealer_total?" · "+b.dealer_total[0]:"")+"</div>";
-  h+='<div class="prow">'+b.dealer_hand.map(cardHTML).join("")+"</div>";
+  var pl=g.players||[],h='<div class="cardtable"><div class="felt">';
+  h+='<div class="pclabel">HAND '+b.hand_no+"/"+b.hands_total+' \u00b7 FLAT BET 10 \u00b7 DEALER STANDS 17</div>';
+  h+='<div class="zone"><div style="text-align:center;position:relative;z-index:1">'+
+     '<span class="dealerplaque">\u25c6 DEALER \u25c6'+(b.dealer_total?" \u00b7 "+b.dealer_total[0]:"")+"</span></div>";
+  h+='<div class="prow">'+b.dealer_hand.map(cardHTML).join("")+"</div></div>";
   for(var i=0;i<2;i++){
     var nm=pl[i]||("P"+(i+1)),tot=(b.player_totals&&b.player_totals[nm])||[0,false];
-    h+='<div class="prow">'+(b.player_hands[nm]||[]).map(cardHTML).join("")+"</div>";
-    h+='<div class="stackline"><span>'+esc(nm)+'</span><span>total <b>'+tot[0]+(tot[1]?" soft":"")+
-       '</b></span><span>bet <b>'+b.bets[nm]+'</b></span></div>';
+    h+='<div class="seat'+(g.turn===nm?" active":"")+'"><div class="prow">'+(b.player_hands[nm]||[]).map(cardHTML).join("")+"</div>";
+    h+='<div class="plaque">'+chipStack(1)+'<span class="nm">'+esc(nm)+'</span>'+
+       '<span class="stk">'+tot[0]+(tot[1]?" soft":"")+'</span>'+
+       '<span class="meta">bet <b style="color:#ffd34d">'+b.bets[nm]+"</b></span></div></div>";
   }
-  h+='<div class="pclabel">SHOE · '+b.shoe.dealt+" dealt · "+b.shoe.remaining+" left</div>";
+  h+='<div class="pclabel">SHOE \u00b7 '+b.shoe.dealt+" dealt \u00b7 "+b.shoe.remaining+" left</div>";
   if(b.last_action)h+='<div class="lastaction">'+esc(b.last_action)+"</div>";
-  return h+"</div>"+cardLegend(g,b.stacks);}
+  return h+"</div></div>"+cardLegend(g,b.stacks);}
 function reasonLabel(r){
   return {timeout:"⏱ timeout",resignation:"resignation",showdown:"showdown",
     bust:"bust-out",chips:"chip lead",draw:"draw",win:"win"}[r]||r;}
