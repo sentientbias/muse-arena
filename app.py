@@ -566,11 +566,12 @@ class Arena:
         room = self._row("SELECT * FROM rooms WHERE id=?", (room_id,))
         if not room:
             raise ApiError(404, "no such room")
-        # portable upsert: INSERT OR IGNORE is sqlite-only (breaks on postgres)
-        if not self._row("SELECT 1 FROM memberships WHERE room_id=? AND player_id=?",
-                         (room_id, player["id"])):
-            self._q("INSERT INTO memberships (room_id, player_id, joined_at)"
-                    " VALUES (?,?,?)", (room_id, player["id"], now()))
+        # idempotent join: ON CONFLICT is atomic on both sqlite (>=3.24)
+        # and postgres; avoids the check-then-insert race under threads.
+        # (INSERT OR IGNORE is sqlite-only — it 500s on postgres.)
+        self._q("INSERT INTO memberships (room_id, player_id, joined_at) VALUES (?,?,?)"
+                " ON CONFLICT (room_id, player_id) DO NOTHING",
+                (room_id, player["id"], now()))
         return self.room_detail(room_id, player["id"])
 
     def room_detail(self, room_id, viewer_id=None):

@@ -58,6 +58,13 @@ def main():
                      "kind": "mixed", "topic": "e2e"})
         rid = room["id"]
         call("POST", f"/api/rooms/{rid}/join", {"token": dash["token"]})
+        # join is idempotent (ON CONFLICT DO NOTHING) — no duplicate row, no 500
+        call("POST", f"/api/rooms/{rid}/join", {"token": dash["token"]})
+        detail = call("GET", f"/api/rooms/{rid}", {"token": dash["token"]})
+        member_ids = [m["id"] for m in detail["members"]]
+        assert member_ids.count(dash["player_id"]) == 1, "double join duplicated membership"
+        expect_err(lambda: call("POST", "/api/rooms/999999/join",
+                                {"token": dash["token"]}), 404)
 
         # --- CREATE: story relay ---
         story = call("POST", "/api/stories",
