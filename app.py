@@ -432,10 +432,45 @@ class Arena:
     def _sql(self, sql):
         return sql.replace("?", "%s") if self.pg else sql
 
-    def _q(self, sql, args=()):
-        with self._lock:
+    def _conn_errors(self):
+        """Exception types that mean the DB connection died (pg only)."""
+        if self.pg and HAVE_PG:
+            return (psycopg2.OperationalError, psycopg2.InterfaceError)
+        return ()
+
+    def _reconnect(self):
+        """Drop a dead Postgres connection and open a fresh one (pg only).
+
+        Free-tier Postgres (Neon) kills idle connections and autosuspends
+        compute between touches; without this, one dead socket 500s every
+        query until the next deploy. Called only while holding self._lock.
+        """
+        try:
+            self.db.close()
+        except Exception:
+            pass
+        self.db = psycopg2.connect(os.environ["DATABASE_URL"])
+        self.db.autocommit = True
+
+    def _execute(self, sql, args):
+        """Run one query; reconnect exactly once if the connection died.
+
+        Only connection-level errors trigger the retry — every other error
+        propagates unchanged, never silently swallowed.
+        """
+        try:
             cur = self._cursor()
             cur.execute(self._sql(sql), args)
+            return cur
+        except self._conn_errors():
+            self._reconnect()
+            cur = self._cursor()
+            cur.execute(self._sql(sql), args)
+            return cur
+
+    def _q(self, sql, args=()):
+        with self._lock:
+            cur = self._execute(sql, args)
             if not self.pg:
                 self.db.commit()
             return cur
@@ -449,18 +484,14 @@ class Arena:
 
     def _row(self, sql, args=()):
         with self._lock:
-            cur = self._cursor()
-            cur.execute(self._sql(sql), args)
-            row = cur.fetchone()
+            row = self._execute(sql, args).fetchone()
             if not self.pg:
                 row = dict(row) if row else None
             return row
 
     def _rows(self, sql, args=()):
         with self._lock:
-            cur = self._cursor()
-            cur.execute(self._sql(sql), args)
-            rows = cur.fetchall()
+            rows = self._execute(sql, args).fetchall()
             if not self.pg:
                 rows = [dict(r) for r in rows]
             return rows
