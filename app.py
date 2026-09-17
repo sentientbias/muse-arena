@@ -3901,15 +3901,15 @@ LANDING_HTML = """
 <meta name="twitter:description" content="Five classic games. $1 USDC on Base to sit down. Beat the house bot, winner takes $1.90. The games look easy — Zuckbot isn't.">
 <meta name="twitter:image" content="https://muse-arena.onrender.com/og-image.png">
 <style>
-:root{color-scheme:dark;--bg:#070b12;--card:#101828;--line:#22314f;
---txt:#eef3fd;--mut:#93a3c4;--cyan:#22d3ee;--gold:#fbbf24;--gold2:#f59e0b;
+:root{color-scheme:dark;--bg:#141d33;--card:#1e2b4d;--line:#33456f;
+--txt:#f2f5fe;--mut:#a9b8d8;--cyan:#22d3ee;--gold:#fbbf24;--gold2:#f59e0b;
 --green:#34d399;--red:#f87171}
 *{box-sizing:border-box}
 body{margin:0;color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;
 background:var(--bg);
-background-image:radial-gradient(1000px 520px at 15% -5%,rgba(34,211,238,.10),transparent 60%),
-radial-gradient(1100px 560px at 85% -5%,rgba(251,191,36,.12),transparent 60%),
-radial-gradient(900px 700px at 50% 110%,rgba(34,211,238,.06),transparent 60%)}
+background-image:radial-gradient(1000px 520px at 15% -5%,rgba(34,211,238,.20),transparent 60%),
+radial-gradient(1100px 560px at 85% -5%,rgba(251,191,36,.24),transparent 60%),
+radial-gradient(900px 700px at 50% 110%,rgba(34,211,238,.13),transparent 60%)}
 .wrap{max-width:1040px;margin:0 auto;padding:0 18px 70px}
 .topbar{display:flex;justify-content:space-between;align-items:center;padding:16px 4px}
 .brand{font-weight:800;letter-spacing:.18em;font-size:1rem;color:#fff}
@@ -3917,8 +3917,8 @@ radial-gradient(900px 700px at 50% 110%,rgba(34,211,238,.06),transparent 60%)}
 nav a{color:var(--cyan);text-decoration:none;margin-left:18px;font-weight:600;font-size:.95rem}
 nav a:hover{text-decoration:underline}
 .hero{text-align:center;padding:64px 22px 46px;margin:8px 0 34px;position:relative;
-background:linear-gradient(165deg,rgba(22,33,58,.92),rgba(11,17,32,.96));
-border:1px solid #2c3d63;border-radius:26px;
+background:linear-gradient(165deg,rgba(34,48,84,.94),rgba(19,29,54,.96));
+border:1px solid #42557f;border-radius:26px;
 box-shadow:0 0 70px rgba(251,191,36,.10),inset 0 1px 0 rgba(255,255,255,.06)}
 .kicker{color:var(--cyan);font-size:.8rem;letter-spacing:.34em;font-weight:700;margin-bottom:14px}
 .hero h1{font-size:clamp(2.4rem,9vw,4.2rem);margin:0 0 10px;letter-spacing:.02em;line-height:1.05;
@@ -3940,7 +3940,7 @@ box-shadow:0 6px 28px rgba(251,191,36,.35)}
 .sec-title{text-align:center;font-size:1.5rem;margin:44px 0 6px;letter-spacing:.04em}
 .sec-sub{text-align:center;color:var(--mut);margin:0 0 22px;font-size:.98rem}
 .games{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}
-.gcard{background:linear-gradient(170deg,rgba(24,36,62,.85),rgba(13,20,36,.92));
+.gcard{background:linear-gradient(170deg,rgba(38,53,92,.9),rgba(22,32,62,.94));
 border:1px solid var(--line);border-radius:18px;padding:22px 16px;text-align:center;
 transition:transform .15s ease,border-color .15s ease,box-shadow .15s ease}
 .gcard:hover{transform:translateY(-3px);border-color:rgba(251,191,36,.55);
@@ -3952,17 +3952,17 @@ box-shadow:0 10px 30px rgba(251,191,36,.12)}
 background:rgba(251,191,36,.12);color:var(--gold);border:1px solid rgba(251,191,36,.45);text-decoration:none}
 .gcard .play:hover{background:rgba(251,191,36,.22)}
 .how{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-top:6px}
-.hstep{background:rgba(16,24,40,.7);border:1px solid var(--line);border-radius:18px;padding:24px 20px;text-align:center}
+.hstep{background:rgba(28,40,70,.78);border:1px solid var(--line);border-radius:18px;padding:24px 20px;text-align:center}
 .hstep .n{display:inline-flex;width:44px;height:44px;border-radius:50%;align-items:center;justify-content:center;
 font-weight:800;font-size:1.15rem;margin-bottom:12px;
 background:rgba(251,191,36,.14);color:var(--gold);border:1px solid rgba(251,191,36,.5)}
 .hstep h3{margin:0 0 8px;font-size:1.02rem}
 .hstep p{color:var(--mut);font-size:.9rem;margin:0;line-height:1.55}
 .hstep p b{color:var(--txt)}
-.panel{margin-top:40px;background:rgba(16,24,40,.7);border:1px solid var(--line);border-radius:18px;padding:26px 24px}
+.panel{margin-top:40px;background:rgba(28,40,70,.78);border:1px solid var(--line);border-radius:18px;padding:26px 24px}
 .panel h2{margin:0 0 10px;font-size:1.2rem}
 .panel p{color:var(--mut);font-size:.92rem;line-height:1.6}
-.code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82rem;background:#0a0f1c;
+.code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82rem;background:#172136;
 border:1px solid var(--line);border-radius:12px;padding:16px;overflow-x:auto;line-height:1.9}
 .code .m{color:var(--cyan)}.code .k{color:var(--gold)}.code .c{color:var(--mut)}
 footer{margin-top:44px;color:var(--mut);font-size:.85rem;text-align:center;line-height:1.9}
