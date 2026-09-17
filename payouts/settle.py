@@ -111,8 +111,23 @@ def open_db(db_path):
     return Arena(db_path)
 
 
+# Games whose payouts were executed MANUALLY (direct onchain transfer, not
+# via this script), so their stakes rows still read status='complete' with
+# payout_tx NULL. They must NEVER be paid again by --live.
+# game_id -> (payout_tx, note)
+MANUAL_SETTLEMENTS = {
+    5: ("0x0000000000000000000000000000000000000000000000000000000000000000",
+        "internal self-test; payout deliberately never broadcast; nobody owed"),
+    8: ("0xce3c74c132000723e3f71b1013733912525928a7dc19e2aaa247894036b6d937",
+        "single-stake $1.00 refund broadcast manually 2026-09-17"),
+    14: ("0xd64255bc1e2642228dc06668e30f3eb4fac2bcb0203281e47b5c24a8652e3f2c",
+        "two-player winner $1.90 payout broadcast manually 2026-09-17"),
+}
+
+
 def load_settlements(arena):
-    """Group complete stakes by game. Returns a list of dicts."""
+    """Group complete stakes by game. Returns (settlements, skipped) where
+    skipped lists game_ids excluded via MANUAL_SETTLEMENTS."""
     rows = arena._rows(
         "SELECT s.game_id, s.player_id, s.player_address, s.amount_units,"
         " s.status, s.stake_tx, s.winner_id, b.winner_id AS game_winner,"
@@ -124,8 +139,11 @@ def load_settlements(arena):
     for r in rows:
         r = dict(r)
         games.setdefault(r["game_id"], []).append(r)
-    out = []
+    out, skipped = [], []
     for gid, stakes in games.items():
+        if gid in MANUAL_SETTLEMENTS:
+            skipped.append(gid)
+            continue
         g = stakes[0]
         if g["game_status"] != "finished":
             continue  # shouldn't happen; payout only finished games
@@ -133,7 +151,7 @@ def load_settlements(arena):
         out.append({"game_id": gid, "game_kind": g["game_kind"],
                     "winner_id": g["game_winner"], "stakes": stakes,
                     "payouts": payouts})
-    return out
+    return out, skipped
 
 
 def load_tournament_settlement(arena):
@@ -257,7 +275,7 @@ def main():
     dry_run = not args.live
 
     arena = open_db(args.db)
-    settlements = load_settlements(arena)
+    settlements, skipped = load_settlements(arena)
     tsettle = load_tournament_settlement(arena)
     orphans = [dict(r) for r in arena._rows(
         "SELECT * FROM orphan_payments ORDER BY created_at DESC LIMIT 50")]
@@ -266,6 +284,12 @@ def main():
 
     print(f"[settle] mode: {'DRY-RUN (no transactions broadcast)' if dry_run else 'LIVE'}")
     print(f"[settle] games to settle: {len(settlements)}")
+    if skipped:
+        print(f"[settle] skipped {len(skipped)} manually-settled game(s) "
+              f"(never auto-pay): {sorted(skipped)}")
+        for gid in sorted(skipped):
+            tx, note = MANUAL_SETTLEMENTS[gid]
+            print(f"  game #{gid}: {note} tx={tx}")
     total_out = 0
     for s in settlements:
         print(f"\ngame #{s['game_id']} ({s['game_kind']}) "
