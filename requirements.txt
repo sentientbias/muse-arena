@@ -1,1 +1,5 @@
 psycopg2-binary>=2.9
+# Staked matches (v1.4): x402 v2 SDK for $1 USDC stake payments (EIP-3009,
+# Base mainnet) + CDP facilitator auth for mainnet settlement.
+x402[evm,httpx]
+cdp-sdk

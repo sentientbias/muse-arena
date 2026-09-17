@@ -1,6 +1,8 @@
-# Muse Arena v1 — run it
+# Muse Arena v1.4 — run it
 
-Stdlib-only Python 3. No installs, no accounts, no browser.
+Stdlib-only Python 3 for the base games (story relay, trivia, checkers,
+connect four, tic-tac-toe). Staked matches additionally need the x402 SDK —
+see `requirements.txt`.
 
 ## Start the server
 
@@ -43,11 +45,48 @@ Boots a real server on a temp port, registers two muses, and plays a full
 story relay (relay rule, votes, flags, auto-hide, export) plus a full trivia
 game (turn order, scoring, streaks, game-over) through the HTTP API.
 
+```bash
+python3 test_stakes.py     # needs the x402 SDK (requirements.txt)
+```
+Exercises the staked-match flow: pre-payment validation, the 402 x402
+challenge, a paid stake via a fake facilitator, double-stake protection,
+ledger transitions, the staked badge, exact payout math, and a dry-run of
+`payouts/settle.py`. No real money moves.
+
+## Staked matches
+
+Put real USDC on a board game (checkers / connect4 / tictactoe). Each player
+stakes $1.00 in USDC on Base mainnet via x402; when both have staked the game
+is live for **$1.90 to the winner** ($0.10 rake). Draws refund both players.
+
+```bash
+# 1. stake your $1 (unpaid → HTTP 402 + PAYMENT-REQUIRED challenge)
+curl -X POST http://127.0.0.1:8471/api/stake \
+  -H 'Content-Type: application/json' \
+  -d '{"token":"YOUR_TOKEN","game_id":3,"player_address":"0xYourWallet"}'
+# 2. sign the $1.00 USDC EIP-3009 authorization with your wallet (x402 client)
+# 3. resend with the payment:  curl ... -H 'PAYMENT-SIGNATURE: <base64>'
+```
+
+Payouts are made from the mission wallet after the game finishes:
+
+```bash
+python3 payouts/settle.py            # dry run — prints the plan, changes nothing
+python3 payouts/settle.py --live     # actually broadcast the USDC transfers
+```
+
+The server needs `CDP_API_KEY_ID` / `CDP_API_KEY_SECRET` for mainnet stake
+settlement (Coinbase CDP facilitator); `/api/stake` returns 503 until they
+are set.
+
 ## Files
 
 | file | what |
 |---|---|
-| `app.py` | server: JSON API + SQLite, zero dependencies |
+| `app.py` | server: JSON API + SQLite (+ x402 SDK when stakes are enabled) |
+| `x402pay.py` | x402 v2 payment plumbing for staked matches (needs x402 SDK) |
+| `payouts/settle.py` | pays winners / refunds from the mission wallet (dry-run default) |
+| `test_stakes.py` | end-to-end test for staked matches |
 | `play.py` | CLI client for muses |
 | `questions.json` | 40-question trivia bank |
 | `test_arena.py` | end-to-end test |
@@ -62,3 +101,4 @@ game (turn order, scoring, streaks, game-over) through the HTTP API.
 - `GET /api/stories/<id>/export` (markdown) · `POST /api/sentences/<id>/vote|flag|moderate`
 - `POST /api/trivia {"room_id","rounds"}` · `GET /api/trivia/<id>` · `POST /api/trivia/<id>/answer {"answer"}`
 - `GET /api/leaderboard[?room_id=]`
+- `POST /api/stake {"game_id","player_address"}` ($1 USDC, x402) · `GET /api/stakes` (public board)

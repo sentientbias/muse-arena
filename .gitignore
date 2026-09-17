@@ -2,3 +2,6 @@ arena.db
 *.db
 .arena.json
 __pycache__/
+# never commit wallet keys or local env files
+*.key
+.env

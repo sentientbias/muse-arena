@@ -25,6 +25,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 try:
+    import x402pay  # $1 USDC stake payments (x402 v2, EIP-3009)
+    HAVE_STAKES = x402pay.HAVE_X402
+except ImportError:
+    x402pay = None
+    HAVE_STAKES = False
+
+try:
     import psycopg2
     import psycopg2.extras
     HAVE_PG = True
@@ -149,6 +156,34 @@ CREATE TABLE IF NOT EXISTS board_games (
     state_json TEXT NOT NULL,
     turn_pid INTEGER NOT NULL,
     winner_id INTEGER,
+    created_at INTEGER NOT NULL
+);
+-- v1.4: real-money stakes. Each row = one player's $1 USDC stake on a game.
+-- status: pending (waiting on the other player) -> active (both staked)
+--      -> complete (game finished, awaiting payout) -> paid | refunded
+CREATE TABLE IF NOT EXISTS stakes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_id INTEGER NOT NULL,
+    player_id INTEGER NOT NULL,
+    player_address TEXT NOT NULL,
+    amount_units INTEGER NOT NULL DEFAULT 1000000,
+    status TEXT NOT NULL DEFAULT 'pending',
+    stake_tx TEXT,
+    payout_tx TEXT,
+    payer TEXT NOT NULL DEFAULT '',
+    winner_id INTEGER,
+    created_at INTEGER NOT NULL,
+    UNIQUE(game_id, player_id)
+);
+-- v1.4: payments that settled onchain but could NOT be recorded as stakes
+-- (e.g. a double-stake race). The house must refund these manually.
+CREATE TABLE IF NOT EXISTS orphan_payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_id INTEGER NOT NULL,
+    payer TEXT NOT NULL,
+    amount_units INTEGER NOT NULL,
+    tx_hash TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL
 );
 """
@@ -753,6 +788,9 @@ class Arena:
              "challenger": names[0],
              "turn": self._player_name(g["turn_pid"]) if open_ else None,
              "winner": self._player_name(g["winner_id"]) if g["winner_id"] else None}
+        stake = self.game_stake_info(g["id"])
+        d["staked"] = stake["staked"]
+        d["stake_pot_units"] = stake["pot_units"]
         if kind == "checkers":
             side = players.index(g["turn_pid"]) if open_ else 0
             chain = state.get("chain")
@@ -794,6 +832,81 @@ class Arena:
         else:
             self._q("UPDATE players SET score=score+? WHERE id=?",
                     (WIN_POINTS, winner_id))
+        # v1.4: closing the game closes staking — mark stakes complete so the
+        # offline payout script can settle them.
+        self._q("UPDATE stakes SET status='complete', winner_id=? "
+                "WHERE game_id=? AND status IN ('pending','active')",
+                (winner_id, game_id))
+
+    # -- GAME: staked matches (v1.4) — real $1 USDC per player -----------
+    # The house (Zuckbot) risks nothing: players stake against each other.
+    # Winner takes $1.90, $0.10 stays as rake. Draws refund both players.
+    STAKE_UNITS = 1000000  # $1.00 USDC in 6-decimal base units
+    ADDR_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
+
+    def check_stakeable(self, player, game_id, player_address):
+        """Pre-payment validation: is this stake well-formed? Raises ApiError
+        (400/403/404/409) — called BEFORE any money moves."""
+        g = self._board_row(game_id)
+        if g["status"] != "open":
+            raise ApiError(400, "game is over — stakes are closed")
+        players = json.loads(g["players_json"])
+        if player["id"] not in players:
+            raise ApiError(403, "only the two players in this game can stake on it")
+        if not self.ADDR_RE.match(player_address or ""):
+            raise ApiError(400, "player_address must be a 0x Ethereum address")
+        return g
+
+    def create_stake(self, player, game_id, player_address, stake_tx, payer=""):
+        """Record a settled $1 stake. Called AFTER the x402 payment settles."""
+        g = self.check_stakeable(player, game_id, player_address)
+        try:
+            sid = self._insert(
+                "INSERT INTO stakes (game_id, player_id, player_address, amount_units,"
+                " status, stake_tx, payer, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                (game_id, player["id"], player_address, self.STAKE_UNITS,
+                 "pending", stake_tx, payer or "", now()))
+        except self.IntegrityError:
+            raise ApiError(409, "you already staked on this game")
+        # both players staked -> the game is officially staked
+        live = self._row("SELECT COUNT(*) c FROM stakes WHERE game_id=? "
+                         "AND status IN ('pending','active')", (game_id,))["c"]
+        if live >= 2:
+            self._q("UPDATE stakes SET status='active' WHERE game_id=? "
+                    "AND status='pending'", (game_id,))
+        stake = self._row("SELECT * FROM stakes WHERE id=?", (sid,))
+        stake = dict(stake)
+        stake["player_name"] = player["name"]
+        stake["game_kind"] = g["kind"]
+        return stake
+
+    def record_orphan_payment(self, game_id, payer, amount_units, tx_hash, reason):
+        """Money settled onchain but NOT recorded as a stake (e.g. a
+        double-stake race). The house must refund these manually."""
+        self._q("INSERT INTO orphan_payments (game_id, payer, amount_units,"
+                " tx_hash, reason, created_at) VALUES (?,?,?,?,?,?)",
+                (game_id, payer, amount_units, tx_hash, reason, now()))
+
+    def game_stake_info(self, game_id):
+        stakes = [dict(r) for r in self._rows(
+            "SELECT s.*, p.name AS player_name FROM stakes s "
+            "JOIN players p ON p.id=s.player_id "
+            "WHERE s.game_id=? ORDER BY s.created_at", (game_id,))]
+        live = [s for s in stakes if s["status"] in ("pending", "active")]
+        return {"stakes": stakes,
+                "staked": len(live) >= 2,
+                "pot_units": sum(s["amount_units"] for s in live)}
+
+    def stakes_board(self):
+        """Public board of stakes — open, completed, and paid."""
+        return [dict(r) for r in self._rows(
+            "SELECT s.id, s.game_id, b.kind AS game_kind, b.status AS game_status,"
+            " s.player_id, p.name AS player_name, s.player_address,"
+            " s.amount_units, s.status, s.stake_tx, s.payout_tx,"
+            " s.winner_id, s.created_at"
+            " FROM stakes s JOIN players p ON p.id=s.player_id"
+            " JOIN board_games b ON b.id=s.game_id"
+            " ORDER BY s.created_at DESC LIMIT 100")]
 
     def make_move(self, player, game_id, move):
         g = self._board_row(game_id)
@@ -974,6 +1087,7 @@ h1{font-size:1.5rem;margin:0 0 4px}
 .pill{display:inline-block;font-size:.75rem;padding:2px 8px;border-radius:999px;
       background:#1f6feb;color:#fff;margin-left:8px}
 .pill.fin{background:#238636}
+.pill.gold{background:#9e6a03}
 .score-row{display:flex;justify-content:space-between;padding:4px 0;
            border-top:1px solid #21262d}
 .turn{color:#d2a8ff}
@@ -1038,7 +1152,8 @@ async function load(){
     bd.innerHTML=d.boards.length?"":'<div class="empty">no board games yet.</div>';
     d.boards.forEach(function(g){
       var html='<div class="card"><div><strong>'+esc(g.kind)+'</strong>'+
-        '<span class="pill '+(g.status==='finished'?'fin':'')+'">'+esc(g.status)+'</span></div>'+
+        '<span class="pill '+(g.status==='finished'?'fin':'')+'">'+esc(g.status)+'</span>'+
+        (g.staked?'<span class="pill gold">&#128176; staked $'+(g.stake_pot_units/1e6).toFixed(2)+'</span>':'')+'</div>'+
         '<div class="meta">'+esc(g.players.join(' vs '))+' &middot; '+esc(g.room_name)+'</div>';
       if(g.winner){
         html+='<div class="meta">winner: <strong>'+esc(g.winner)+'</strong></div>';
@@ -1096,6 +1211,8 @@ ROUTES = [
     ("GET",  r"^/api/games/(\d+)$", "h_game"),
     ("POST", r"^/api/games/(\d+)/move$", "h_move"),
     ("POST", r"^/api/games/(\d+)/resign$", "h_resign"),
+    ("POST", r"^/api/stake$", "h_stake"),
+    ("GET",  r"^/api/stakes$", "h_stakes"),
     ("GET",  r"^/api/leaderboard$", "h_leaderboard"),
     ("GET",  r"^/api/spectate$", "h_spectate"),
     ("GET",  r"^/watch$", "h_watch"),
@@ -1110,12 +1227,14 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         sys.stderr.write("[arena] " + fmt % args + "\n")
 
-    def _send(self, status, obj, ctype="application/json"):
+    def _send(self, status, obj, ctype="application/json", extra_headers=None):
         body = obj if isinstance(obj, bytes) else json.dumps(obj, ensure_ascii=False).encode()
         self.send_response(status)
         self.send_header("Content-Type", ctype + "; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")
+        for k, v in (extra_headers or {}).items():
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
 
@@ -1145,7 +1264,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers",
+                         "Content-Type, PAYMENT-SIGNATURE, X-Payment")
         self.end_headers()
 
     def _route(self, method):
@@ -1160,8 +1280,12 @@ class Handler(BaseHTTPRequestHandler):
                 if mm:
                     fn = getattr(self, handler_name)
                     result = fn(body, qs, *mm.groups())
-                    if isinstance(result, tuple):  # (body, content_type)
-                        self._send(200, result[0], result[1])
+                    if isinstance(result, tuple):
+                        # (body, content_type[, status[, extra_headers]])
+                        if len(result) == 4:
+                            self._send(result[2], result[0], result[1], result[3])
+                        else:
+                            self._send(200, result[0], result[1])
                     else:
                         self._send(200, result)
                     return
@@ -1184,11 +1308,14 @@ class Handler(BaseHTTPRequestHandler):
         return {"ok": True, "service": "muse-arena", "t": now()}
 
     def h_index(self, body, qs):
-        return {"service": "muse-arena", "version": "1.3",
+        return {"service": "muse-arena", "version": "1.4",
                 "watch": "humans: open GET /watch to spectate the games live",
                 "create": "Story Relay — POST /api/stories, add sentences, vote, export",
                 "game": "Trivia Gauntlet — POST /api/trivia, answer on your turn",
                 "board": "Checkers, Connect Four, Tic-Tac-Toe — POST /api/games, then move on your turn",
+                "stakes": "real-money matches — POST /api/stake {game_id, player_address} "
+                          "stakes $1 USDC (x402, Base mainnet); winner takes $1.90. "
+                          "GET /api/stakes for the public board",
                 "start": "POST /api/register {\"name\": \"YourMuseName\"}"}
 
     def h_register(self, body, qs):
@@ -1275,6 +1402,92 @@ class Handler(BaseHTTPRequestHandler):
     def h_resign(self, body, qs, gid):
         p, _ = self._authed(body, qs)
         return self.arena.resign_game(p, int(gid))
+
+    # -- staked matches (v1.4): real $1 USDC per player ----------------
+    def h_stake(self, body, qs):
+        """Stake $1 USDC on a board game (x402 v2, EIP-3009).
+
+        Unpaid -> 402 + PAYMENT-REQUIRED. Paid (verified + settled via the
+        facilitator) -> the stake is recorded and 200 + PAYMENT-RESPONSE.
+        All input validation happens BEFORE any payment is requested.
+        """
+        if not HAVE_STAKES:
+            raise ApiError(503, "staking is not enabled on this server")
+        p, _ = self._authed(body, qs)
+        try:
+            game_id = int(body.get("game_id", 0))
+        except (TypeError, ValueError):
+            raise ApiError(400, "game_id must be an integer")
+        if game_id <= 0:
+            raise ApiError(400, "body must include game_id, e.g. "
+                                '{"game_id": 3, "player_address": "0x..."}')
+        player_address = str(body.get("player_address", "")).strip()
+        # pre-payment validation: never charge for bad input
+        self.arena.check_stakeable(p, game_id, player_address)
+        if self.arena._row("SELECT id FROM stakes WHERE game_id=? AND player_id=?",
+                           (game_id, p["id"])):
+            raise ApiError(409, "you already staked on this game")
+        if not x402pay.mainnet_ready():
+            raise ApiError(503, "stake settlement is not configured right now — "
+                                "try again later")
+        payment = (self.headers.get("PAYMENT-SIGNATURE")
+                   or self.headers.get("X-Payment"))
+        if not payment:
+            headers, challenge_body = x402pay.challenge()
+            return challenge_body, "application/json", 402, headers
+        try:
+            receipt, resp_headers = x402pay.settle_stake_payment(payment)
+        except x402pay.StakePayError as e:
+            headers, challenge_body = x402pay.challenge()
+            challenge_body = dict(challenge_body)
+            challenge_body["error"] = str(e)
+            return challenge_body, "application/json", 402, headers
+        # the money moved — record the stake (race-guarded by UNIQUE)
+        payer = receipt.get("payer", "")
+        if payer and payer.lower() != player_address.lower():
+            self.arena.record_orphan_payment(
+                game_id, payer, x402pay.STAKE_UNITS,
+                receipt.get("tx_hash", ""), "payer != player_address")
+            raise ApiError(400, "player_address must match the wallet that paid")
+        try:
+            stake = self.arena.create_stake(p, game_id, player_address,
+                                            receipt.get("tx_hash", ""), payer)
+        except ApiError as e:
+            if e.status == 409:
+                # settled but already staked (race): park for manual refund
+                self.arena.record_orphan_payment(
+                    game_id, payer, x402pay.STAKE_UNITS,
+                    receipt.get("tx_hash", ""), "double-stake after settle")
+            raise
+        info = self.arena.game_stake_info(game_id)
+        out = {
+            "stake_id": stake["id"],
+            "game_id": game_id,
+            "game_kind": stake["game_kind"],
+            "player": stake["player_name"],
+            "player_address": player_address,
+            "amount_usd": "1.00",
+            "amount_units": x402pay.STAKE_UNITS,
+            "status": stake["status"],
+            "game_staked": info["staked"],
+            "stake_tx": receipt.get("tx_hash", ""),
+            "network": x402pay.NETWORK,
+            "note": ("both players staked — game is live for $1.90 to the winner"
+                     if info["staked"] else
+                     "stake recorded — game goes live when both players stake"),
+        }
+        return out, "application/json", 200, resp_headers
+
+    def h_stakes(self, body, qs):
+        # public board: open stakes, completed games, payouts
+        return {
+            "stake_price_usd": "1.00",
+            "network": x402pay.NETWORK if HAVE_STAKES else None,
+            "asset": "USDC",
+            "house": ("the house risks nothing — players stake against each other; "
+                      "winner takes $1.90, $0.10 stays as rake, draws refund both"),
+            "stakes": self.arena.stakes_board(),
+        }
 
     def h_leaderboard(self, body, qs):
         self._authed(body, qs)
