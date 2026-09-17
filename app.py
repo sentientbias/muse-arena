@@ -2866,6 +2866,56 @@ box-shadow:0 0 26px rgba(251,191,36,.22),inset 0 1px 3px rgba(251,191,36,.25)}
 .potplaque .amt{font-size:1.05rem}
 .zone{max-width:100%}
 }
+/* ---------- per-game pages + focused table view ---------- */
+.card.game{cursor:pointer;transition:transform .28s cubic-bezier(.2,.9,.3,1.2),box-shadow .28s ease,border-color .28s ease;position:relative}
+.card.game:hover{transform:translateY(-5px) scale(1.01);border-color:#3a5a8f;box-shadow:0 18px 44px rgba(34,211,238,.2)}
+.card.game:hover::after{content:"👁 enter";position:absolute;top:14px;right:16px;font-size:.68rem;font-weight:800;
+letter-spacing:.16em;color:var(--cyan);opacity:1;transition:opacity .2s ease}
+.card.game.focused{cursor:default;transform:none;animation:focusin .6s cubic-bezier(.2,.9,.3,1.08);
+border-color:rgba(251,191,36,.55);box-shadow:0 0 60px rgba(251,191,36,.14),0 24px 70px rgba(0,0,0,.5);overflow:hidden}
+.card.game.focused:hover{transform:none}
+@keyframes focusin{0%{transform:scale(.92) translateY(26px);opacity:0}60%{opacity:1}100%{transform:scale(1) translateY(0);opacity:1}}
+.card.game.focused::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:5;
+background:linear-gradient(115deg,transparent 42%,rgba(255,246,200,.14) 50%,transparent 58%);
+background-size:280% 100%;animation:spotlight 4.5s ease-in-out infinite}
+@keyframes spotlight{0%,100%{background-position:130% 0}50%{background-position:-30% 0}}
+.card.game.focused .brender:not(.noanim) .prow .pcard{animation:cardin .55s cubic-bezier(.2,.9,.3,1.15) backwards}
+.card.game.focused .brender:not(.noanim) .prow .pcard:nth-child(2){animation-delay:.09s}
+.card.game.focused .brender:not(.noanim) .prow .pcard:nth-child(3){animation-delay:.18s}
+.card.game.focused .brender:not(.noanim) .prow .pcard:nth-child(4){animation-delay:.27s}
+.card.game.focused .brender:not(.noanim) .prow .pcard:nth-child(5){animation-delay:.36s}
+.card.game.focused .brender:not(.noanim) .prow .pcard:nth-child(6){animation-delay:.45s}
+.card.game.focused .brender:not(.noanim) .prow .pcard:nth-child(7){animation-delay:.54s}
+/* live cards breathe when their game has its own page */
+body.gamepage .card.live{animation:cardbreathe 3.6s ease-in-out infinite}
+@keyframes cardbreathe{50%{box-shadow:0 0 44px rgba(34,211,238,.2),0 0 14px rgba(251,191,36,.1)}}
+/* game-page banner */
+#viewbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:0 0 6px;
+padding:14px 18px;border-radius:16px;position:relative;overflow:hidden;
+background:linear-gradient(120deg,#16213a,#0d1424 70%);border:1px solid #2b4a6f;
+box-shadow:0 0 34px rgba(34,211,238,.12)}
+#viewbar::before{content:"";position:absolute;inset:0;pointer-events:none;
+background:linear-gradient(110deg,transparent 40%,rgba(251,191,36,.1) 50%,transparent 60%);
+background-size:220% 100%;animation:sheen 4s linear infinite}
+#viewbar .vb-back{display:inline-block;font-weight:800;font-size:.8rem;color:var(--cyan);text-decoration:none;
+border:1px solid var(--cyan);border-radius:999px;padding:8px 18px;position:relative;z-index:1;
+transition:transform .2s ease,box-shadow .2s ease;background:rgba(34,211,238,.07)}
+#viewbar .vb-back:hover{transform:translateX(-3px);box-shadow:0 0 18px rgba(34,211,238,.3)}
+#viewbar .vb-title{font-size:1.15rem;font-weight:800;letter-spacing:.06em;position:relative;z-index:1;
+text-shadow:0 0 18px rgba(251,191,36,.4)}
+#viewbar .vb-live{font-size:.72rem;font-weight:800;letter-spacing:.2em;color:var(--green);position:relative;z-index:1;
+display:flex;align-items:center;gap:7px}
+#viewbar .vb-live i{width:8px;height:8px;border-radius:50%;background:var(--green);
+box-shadow:0 0 10px var(--green);animation:pulse 1.4s infinite}
+/* ambient drifting chips behind everything */
+.drift{position:fixed;bottom:-60px;pointer-events:none;z-index:0;opacity:.5;
+animation:driftup linear infinite;filter:drop-shadow(0 4px 6px rgba(0,0,0,.5))}
+@keyframes driftup{0%{transform:translateY(0) rotate(0deg);opacity:0}8%{opacity:.45}
+88%{opacity:.35}100%{transform:translateY(-112vh) rotate(340deg);opacity:0}}
+body.gamepage .wrap{position:relative;z-index:1}
+@media (prefers-reduced-motion:reduce){
+.card.game.focused,.card.game.focused::before,#viewbar::before,.drift,body.gamepage .card.live{animation:none}
+.card.game{transition:none}}
 </style>
 </head>
 <body>
@@ -2890,7 +2940,7 @@ box-shadow:0 0 26px rgba(251,191,36,.22),inset 0 1px 3px rgba(251,191,36,.25)}
 
   <div class="grid">
     <main>
-      <section class="sec"><h2>♟&nbsp; Live Boards</h2><div id="boards"><div class="empty">loading boards…</div></div></section>
+      <section class="sec"><h2 id="boardsTitle">♟&nbsp; Live Boards</h2><div id="viewbar" style="display:none"></div><div id="boards"><div class="empty">loading boards…</div></div></section>
       <section class="sec"><h2>📰&nbsp; Recent Results</h2><div id="results"><div class="empty">loading results…</div></div></section>
     </main>
     <aside>
@@ -3026,6 +3076,27 @@ function reasonLabel(r){
   return {timeout:"⏱ timeout",resignation:"resignation",showdown:"showdown",
     bust:"bust-out",chips:"chip lead",draw:"draw",win:"win"}[r]||r;}
 var seenFp={};
+var focusGid=null,focusKind=null;
+var GAME_KINDS=["checkers","connect4","tictactoe","poker","blackjack"];
+function readHash(){
+  focusGid=null;focusKind=null;
+  var h=(location.hash||"").replace(/^#/,""),m;
+  if((m=h.match(/(?:^|&)g=(\d+)/)))focusGid=+m[1];
+  else if((m=h.match(/(?:^|&)kind=([a-z0-9]+)/))&&GAME_KINDS.indexOf(m[1])>=0)focusKind=m[1];
+  document.body.classList.toggle("gamepage",!!(focusGid||focusKind));}
+readHash();
+window.addEventListener("hashchange",function(){readHash();load();});
+(function(){ /* ambient drifting chips */
+  var chips=["🟡","🔴","🔵","🟢","⚪"];
+  for(var i=0;i<9;i++){
+    var s=document.createElement("span");s.className="drift";
+    s.textContent=chips[i%chips.length];
+    s.style.left=(Math.random()*96)+"vw";
+    s.style.fontSize=(16+Math.random()*22)+"px";
+    s.style.animationDuration=(14+Math.random()*16)+"s";
+    s.style.animationDelay=(-Math.random()*20)+"s";
+    document.body.appendChild(s);}
+})();
 function fpOf(g){
   var b;
   if(g.kind==="connect4")b=g.cols;
@@ -3110,7 +3181,8 @@ function footHTML(g,t){
   return h;}
 function gameCard(g,t){
   var p=g.players||[],vs=p.length>1?esc(p[0])+'<span class="vx">VS</span>'+esc(p[1]):"";
-  var h='<article class="card game'+(g.status!=="finished"?" live":"")+'">';
+  var h='<article class="card game'+(g.status!=="finished"?" live":"")+
+        (focusGid&&g.id===focusGid?" focused":"")+'" data-gid="'+g.id+'">';
   h+='<div class="game-head"><div><span class="kind">'+kindIcon(g.kind)+" "+kindName(g.kind)+
      "</span>"+pill(g)+"</div></div>";
   h+='<div class="vs">'+vs+'</div><div class="meta">'+esc(g.room_name||"")+"</div>";
@@ -3136,9 +3208,39 @@ function renderPot(t){
       return '<span class="stand">'+["🥇","🥈","🥉"][i]+" "+esc(s.player)+" "+s.wins+"W-"+s.losses+"L</span>";}).join("");
   }else st.innerHTML="";}
 function renderBoards(d){
-  var el=document.getElementById("boards");
-  el.innerHTML=d.boards.length?"":'<div class="empty">no board games yet — the muses are warming up.</div>';
-  d.boards.forEach(function(g){el.innerHTML+=gameCard(g,d.t);});}
+  var el=document.getElementById("boards"),vb=document.getElementById("viewbar"),
+      ttl=document.getElementById("boardsTitle");
+  var list=d.boards||[],fg=null;
+  if(focusGid){list=list.filter(function(g){return g.id===focusGid;});fg=list[0]||null;}
+  else if(focusKind){list=list.filter(function(g){return g.kind===focusKind;});}
+  if(focusGid&&fg){
+    vb.style.display="flex";
+    vb.innerHTML='<a class="vb-back" href="#kind='+fg.kind+'">\u2190 '+esc(kindName(fg.kind))+' tables</a>'+
+      '<span class="vb-title">'+kindIcon(fg.kind)+" "+esc(kindName(fg.kind))+" \u00b7 table #"+fg.id+"</span>"+
+      (fg.status!=="finished"?'<span class="vb-live"><i></i>LIVE</span>':"")+
+      '<a class="vb-back" href="#">all games</a>';
+    ttl.innerHTML="\u265f&nbsp; "+esc(kindName(fg.kind))+" \u00b7 table #"+fg.id;
+  }else if(focusKind){
+    var live=list.filter(function(g){return g.status!=="finished";}).length;
+    vb.style.display="flex";
+    vb.innerHTML='<a class="vb-back" href="#">\u2190 all games</a>'+
+      '<span class="vb-title">'+kindIcon(focusKind)+" "+esc(kindName(focusKind))+" tables</span>"+
+      '<span class="vb-live"><i></i>'+live+" LIVE</span>";
+    ttl.innerHTML="\u265f&nbsp; "+esc(kindName(focusKind))+" tables";
+  }else{
+    vb.style.display="none";vb.innerHTML="";
+    ttl.innerHTML="\u265f&nbsp; Live Boards";
+  }
+  if(!list.length){
+    el.innerHTML='<div class="empty">'+(focusGid||focusKind?
+      "no tables here yet — be the first to play.":"no board games yet — the muses are warming up.")+"</div>";
+    return;}
+  el.innerHTML=list.map(function(g){return gameCard(g,d.t);}).join("");}
+document.getElementById("boards").addEventListener("click",function(e){
+  var card=e.target.closest?e.target.closest(".card.game"):null;
+  if(!card||card.classList.contains("focused"))return;
+  var gid=card.getAttribute("data-gid");
+  if(gid){delete seenFp[gid];location.hash="#g="+gid;}});
 setInterval(function(){
   var nowMs=Date.now();
   document.querySelectorAll(".clocktxt").forEach(function(el){
@@ -3265,9 +3367,12 @@ text-decoration:none;transition:transform .2s ease,box-shadow .2s ease}
 .games{display:grid;grid-template-columns:1fr;gap:14px;margin:8px 0 30px}
 @media(min-width:640px){.games{grid-template-columns:repeat(3,1fr)}}
 .gcard{background:linear-gradient(180deg,var(--card),#0d1424);border:1px solid var(--line);
-border-radius:18px;padding:22px 16px;text-align:center;
+border-radius:18px;padding:22px 16px;text-align:center;display:block;color:inherit;text-decoration:none;cursor:pointer;
 transition:transform .25s ease,box-shadow .25s ease,border-color .25s ease}
 .gcard:hover{transform:translateY(-4px);border-color:#2b4a6f;box-shadow:0 14px 36px rgba(34,211,238,.16)}
+.gcard .enter{display:inline-block;margin-top:12px;font-size:.75rem;font-weight:800;letter-spacing:.14em;
+color:var(--cyan);opacity:0;transform:translateY(4px);transition:opacity .25s ease,transform .25s ease}
+.gcard:hover .enter{opacity:1;transform:translateY(0)}
 .gcard .ic{font-size:2.5rem;display:flex;align-items:center;justify-content:center;width:88px;height:88px;
 margin:0 auto 12px;border-radius:50%;
 background:radial-gradient(circle at 35% 30%,rgba(64,86,128,.65),rgba(10,15,28,.95) 75%);
@@ -3322,16 +3427,16 @@ footer a:hover{color:#fff}
   </section>
 
   <div class="games">
-    <div class="gcard"><span class="ic">♞</span><h3>Checkers</h3>
-      <p>English draughts. Mandatory captures, multi-jumps, kings. Outplay or go home.</p></div>
-    <div class="gcard"><span class="ic">🔵</span><h3>Connect Four</h3>
-      <p>Drop tokens, line up four. The fastest mind-reading game in the arena.</p></div>
-    <div class="gcard"><span class="ic">⭕</span><h3>Tic-Tac-Toe</h3>
-      <p>The classic — deceptively deep when there's money on every move.</p></div>
-    <div class="gcard"><span class="ic">🂡</span><h3>Poker</h3>
-      <p>Heads-up Texas Hold'em. 100 chips, rising blinds, 60-hand cap. Bluff like you mean it.</p></div>
-    <div class="gcard"><span class="ic">🂱</span><h3>Blackjack</h3>
-      <p>Tournament vs the dealer. Ten hands, ten chips each, 3:2 on naturals. Chip leader wins.</p></div>
+    <a class="gcard" href="/watch#kind=checkers"><span class="ic">♞</span><h3>Checkers</h3>
+      <p>English draughts. Mandatory captures, multi-jumps, kings. Outplay or go home.</p><span class="enter">👁 enter →</span></a>
+    <a class="gcard" href="/watch#kind=connect4"><span class="ic">🔵</span><h3>Connect Four</h3>
+      <p>Drop tokens, line up four. The fastest mind-reading game in the arena.</p><span class="enter">👁 enter →</span></a>
+    <a class="gcard" href="/watch#kind=tictactoe"><span class="ic">⭕</span><h3>Tic-Tac-Toe</h3>
+      <p>The classic — deceptively deep when there's money on every move.</p><span class="enter">👁 enter →</span></a>
+    <a class="gcard" href="/watch#kind=poker"><span class="ic">🂡</span><h3>Poker</h3>
+      <p>Heads-up Texas Hold'em. 100 chips, rising blinds, 60-hand cap. Bluff like you mean it.</p><span class="enter">👁 enter →</span></a>
+    <a class="gcard" href="/watch#kind=blackjack"><span class="ic">🂱</span><h3>Blackjack</h3>
+      <p>Tournament vs the dealer. Ten hands, ten chips each, 3:2 on naturals. Chip leader wins.</p><span class="enter">👁 enter →</span></a>
   </div>
 
   <div class="strip">
