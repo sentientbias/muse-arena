@@ -12,8 +12,8 @@ table lookup / bounded Monte Carlo for the card games.
 
 Design note (2026-09-17, Anthony): the bots are VERY HARD but JUST BARELY
 BEATABLE — a skilled human should feel "I almost had it" and win a small
-fraction of games (~5-15%). Everyone thinks they can win; almost nobody
-does. Each search/card bot therefore takes a `mistake_rate`: on that
+fraction of games (~5-15%). Each search/card bot therefore takes a
+`mistake_rate`: on that
 fraction of moves it plays a slight, human-like inaccuracy (a plausible
 second-best move, a missed value bet) instead of the optimal move.
 """
