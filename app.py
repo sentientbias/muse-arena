@@ -851,7 +851,12 @@ class Arena:
 
         Wallet is OPTIONAL — a visitor claims a table name and challenges
         before connecting a wallet; the wallet binds at stake time.
-        Wallet-keyed resume (old flow) is unchanged."""
+        Resume is by wallet when one is given, otherwise by table name
+        (the token in localStorage is the primary identity; name resume
+        is a convenience for the same browser). Never matches on an
+        empty wallet: agent and house rows also have wallet='' and must
+        never be renamed into a human seat.
+        """
         wallet = (wallet or "").strip().lower()
         if wallet and not self.ADDR_RE.match(wallet):
             raise ApiError(400, "wallet must be a 0x Ethereum address")
@@ -878,25 +883,6 @@ class Arena:
                 row["name"] = name
             return {"player_id": row["id"], "name": row["name"],
                     "token": row["token"], "wallet": row.get("wallet") or "",
-                    "note": "keep your token secret — it is your identity here"}
-        name = clean_text(name, MAX_NAME_LEN)
-        if len(name) < 2:
-            raise ApiError(400, "name must be at least 2 characters")
-        if not re.match(r"^[A-Za-z0-9 _\-\.]+$", name):
-            raise ApiError(400, "name may only contain letters, numbers, spaces, _ - .")
-        if name.lower() == HOUSE_BOT_NAME.lower():
-            raise ApiError(409, "that name belongs to the house bot — pick another")
-        row = self._row("SELECT * FROM players WHERE wallet=?", (wallet,))
-        if row:
-            row = dict(row)
-            if row["name"].lower() != name.lower():
-                if self._row("SELECT id FROM players WHERE lower(name)=lower(?)"
-                             " AND id<>?", (name, row["id"])):
-                    raise ApiError(409, "that name is taken — pick another")
-                self._q("UPDATE players SET name=? WHERE id=?", (name, row["id"]))
-                row["name"] = name
-            return {"player_id": row["id"], "name": row["name"],
-                    "token": row["token"], "wallet": wallet,
                     "note": "keep your token secret — it is your identity here"}
         if self._row("SELECT id FROM players WHERE lower(name)=lower(?)", (name,)):
             raise ApiError(409, "that name is taken — pick another")
