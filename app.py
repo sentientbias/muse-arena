@@ -3951,6 +3951,8 @@ transition:transform .15s ease,border-color .15s ease,box-shadow .15s ease}
 .gcard:hover{transform:translateY(-3px);border-color:rgba(251,191,36,.55);
 box-shadow:0 10px 30px rgba(251,191,36,.12)}
 .gcard .ic{font-size:2.2rem;display:block;margin-bottom:10px}
+.gcard .gprev{display:block;width:100%;aspect-ratio:8/5;object-fit:cover;border-radius:12px;
+margin:0 0 12px;border:1px solid rgba(251,191,36,.25);box-shadow:0 4px 18px rgba(0,0,0,.35)}
 .gcard h3{margin:0 0 6px;font-size:1.05rem}
 .gcard p{color:var(--mut);font-size:.86rem;margin:0 0 14px;line-height:1.5;min-height:3.6em}
 .gcard .play{display:inline-block;padding:9px 20px;border-radius:10px;font-weight:700;font-size:.88rem;
@@ -4018,19 +4020,19 @@ footer a:hover{text-decoration:underline}
   <h2 class="sec-title">Pick your table</h2>
   <p class="sec-sub">Same stakes everywhere. One table name. Zuckbot never sleeps.</p>
   <div class="games">
-    <div class="gcard"><span class="ic">♞</span><h3>Checkers</h3>
+    <div class="gcard"><img class="gprev" src="/img/prev-checkers.png" alt="Checkers board"><h3>Checkers</h3>
       <p>English draughts. Captures mandatory, multi-jumps chained.</p>
       <a class="play" href="/play">Play vs Zuckbot</a></div>
-    <div class="gcard"><span class="ic">🔵</span><h3>Connect Four</h3>
+    <div class="gcard"><img class="gprev" src="/img/prev-connect4.png" alt="Connect Four board"><h3>Connect Four</h3>
       <p>Drop chips, connect four. Quick and brutal.</p>
       <a class="play" href="/play">Play vs Zuckbot</a></div>
-    <div class="gcard"><span class="ic">⭕</span><h3>Tic-Tac-Toe</h3>
+    <div class="gcard"><img class="gprev" src="/img/prev-tictactoe.png" alt="Tic-Tac-Toe board"><h3>Tic-Tac-Toe</h3>
       <p>Perfect play draws — can you find the crack?</p>
       <a class="play" href="/play">Play vs Zuckbot</a></div>
-    <div class="gcard"><span class="ic">🂡</span><h3>Poker</h3>
+    <div class="gcard"><img class="gprev" src="/img/prev-poker.png" alt="Poker table"><h3>Poker</h3>
       <p>Heads-up no-limit hold'em. 100-chip stacks. Bluff like you mean it.</p>
       <a class="play" href="/play">Play vs Zuckbot</a></div>
-    <div class="gcard"><span class="ic">🂱</span><h3>Blackjack</h3>
+    <div class="gcard"><img class="gprev" src="/img/prev-blackjack.png" alt="Blackjack table"><h3>Blackjack</h3>
       <p>You + bot vs the dealer. Ten hands, most chips wins.</p>
       <a class="play" href="/play">Play vs Zuckbot</a></div>
   </div>
@@ -4131,6 +4133,7 @@ ROUTES = [
     ("GET",  r"^/api/spectate$", "h_spectate"),
     ("GET",  r"^/watch$", "h_watch"),
     ("GET",  r"^/og-image\.png$", "h_ogimage"),
+    ("GET",  r"^/img/([a-z0-9\-]+)\.png$", "h_img"),
     ("GET",  r"^/api/map$", "h_api_map"),
     ("GET",  r"^/$", "h_index"),
     ("GET",  r"^/ping$", "h_ping"),
@@ -4605,6 +4608,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def h_watch(self, body, qs):
         return WATCH_HTML.encode("utf-8"), "text/html"
+
+    def h_img(self, body, qs, name):
+        # game preview thumbnails; read-only static assets
+        safe = "".join(c for c in name if c.isalnum() or c in "-_")
+        p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "assets", safe + ".png")
+        if not os.path.isfile(p):
+            raise ApiError(404, "no such image")
+        with open(p, "rb") as f:
+            data = f.read()
+        return data, "image/png", 200, {"Cache-Control": "public, max-age=86400"}
 
     def h_ogimage(self, body, qs):
         # static link-preview asset; read-only, no game state touched
