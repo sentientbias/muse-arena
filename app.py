@@ -19,7 +19,7 @@ no longer advertised on any visible surface.)
 Auth: token issued at registration, passed as "token" in every JSON body
 (or ?token= query param). v1 trusts the LAN; v2 should sign requests.
 """
-import argparse, hashlib, hmac, itertools, json, os, random, re, secrets, sqlite3, sys, threading, time
+import argparse, hashlib, hmac, itertools, json, os, random, re, secrets, sqlite3, subprocess, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -261,6 +261,21 @@ CREATE TABLE IF NOT EXISTS tournament (
 
 BOARD_KINDS = ("checkers", "connect4", "tictactoe", "poker", "blackjack")
 CARD_KINDS = ("poker", "blackjack")
+# v2.8 — humans vs agents (checkers). Humans are players rows with
+# is_human=1, identified by wallet. The house bot ("Zuckbot") is the
+# always-on opponent; its $1 counter-stake is house money (payer='house').
+HOUSE_BOT_NAME = "Zuckbot"
+HUMAN_ROOM_NAME = "Human Arena"
+HUMAN_MOVE_CLOCK_SECONDS = 300  # humans get 5 minutes a move; agents keep 120s
+USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"  # USDC on Base
+BASE_RPCS = ("https://mainnet.base.org", "https://base.publicnode.com")
+TRANSFER_TOPIC = ("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c"
+                  "4a11628f55a4df523b3ef")  # ERC20 Transfer(address,address,uint256)
+# stake destination: the mission wallet (house). Honors the same env
+# override the x402 flow uses; falls back to the known address.
+PAY_TO = (x402pay.PAY_TO if HAVE_STAKES
+          else os.environ.get("X402_STAKE_PAY_TO",
+                              "0xCe668A6eEd09dC1b53D6b231c4875456668C1775").strip())
 WIN_POINTS = 20   # leaderboard points for winning a board game
 DRAW_POINTS = 5   # each, on a draw
 MOVE_CLOCK_SECONDS = 120  # per-move clock: the side to move forfeits if idle past this
@@ -425,6 +440,85 @@ CHK_ORIENTATION = ("row 0 is the TOP edge. the challenger (first player listed) 
                    "promoting on row 0. the opponent is the TOP side (w) and "
                    "moves DOWN = increasing row, promoting on row 7. "
                    "only dark squares ((r+c) odd) are playable.")
+
+# ---------------------------------------------------------------------------
+# v2.8 — house checkers bot. Negamax with alpha-beta pruning and iterative
+# deepening; plays for the house ("Zuckbot") against human challengers.
+# ---------------------------------------------------------------------------
+
+_CHK_PIECE_VAL = {"b": 100, "w": 100, "B": 175, "W": 175}
+
+
+class _ChkTimeout(Exception):
+    pass
+
+
+def _chk_eval(board, side):
+    """Centipawn-ish score from `side`'s perspective: material plus
+    advancement and central control."""
+    s = 0
+    for r in range(8):
+        for c in range(8):
+            p = board[r][c]
+            if not p:
+                continue
+            v = _CHK_PIECE_VAL[p] + (3 - abs(3.5 - c)) * 2
+            if p in ("b", "B"):
+                v += (7 - r) * 6  # men want row 0
+                s += v if side == 0 else -v
+            else:
+                v += r * 6  # men want row 7
+                s += v if side == 1 else -v
+    return s
+
+
+def _chk_negamax(board, side, depth, alpha, beta, deadline, chain=None):
+    if time.time() > deadline:
+        raise _ChkTimeout()
+    moves = chk_legal_moves(board, side, chain)
+    if not moves:
+        return -50000 - depth, None  # no legal move: this side loses
+    if depth == 0:
+        return _chk_eval(board, side), None
+    moves.sort(key=lambda m: abs(m["to"][0] - m["from"][0]), reverse=True)
+    best, bestm = -10 ** 9, None
+    for m in moves:
+        nb, _captured, _prom, chain2 = chk_apply(board, side, m)
+        if chain2:  # multi-jump: same side keeps moving
+            val, _ = _chk_negamax(nb, side, depth - 1, alpha, beta,
+                                  deadline, chain=tuple(chain2))
+        else:
+            val, _ = _chk_negamax(nb, 1 - side, depth - 1,
+                                  -beta, -alpha, deadline)
+            val = -val
+        if val > best:
+            best, bestm = val, m
+        if best > alpha:
+            alpha = best
+        if alpha >= beta:
+            break
+    return best, bestm
+
+
+def chk_bot_move(board, side, max_depth=4, time_budget=2.0, chain=None):
+    """Pick the house bot's move. Iterative deepening 1..max_depth inside
+    a time budget; falls back to the deepest completed depth."""
+    moves = chk_legal_moves(board, side, chain)
+    if not moves:
+        return None
+    if len(moves) == 1:
+        return moves[0]
+    deadline = time.time() + time_budget
+    best = moves[0]
+    try:
+        for depth in range(1, max_depth + 1):
+            _val, m = _chk_negamax(board, side, depth,
+                                   -10 ** 9, 10 ** 9, deadline)
+            if m:
+                best = m
+    except _ChkTimeout:
+        pass
+    return best
 
 # ---------------------------------------------------------------------------
 # v2.0 — cards. Pure helpers shared by poker + blackjack. Card strings are
@@ -604,6 +698,21 @@ class Arena:
             self._q("ALTER TABLE board_games ADD COLUMN win_reason TEXT")
         except Exception:
             pass  # already migrated
+        # v2.8: humans vs agents. Humans are players rows (is_human=1) keyed
+        # by wallet address; turn_clock records the per-move clock seconds
+        # in force for the side to move (humans get 300s, agents 120s).
+        try:
+            self._q("ALTER TABLE players ADD COLUMN is_human INTEGER NOT NULL DEFAULT 0")
+        except Exception:
+            pass  # already migrated
+        try:
+            self._q("ALTER TABLE players ADD COLUMN wallet TEXT NOT NULL DEFAULT ''")
+        except Exception:
+            pass  # already migrated
+        try:
+            self._q("ALTER TABLE board_games ADD COLUMN turn_clock INTEGER")
+        except Exception:
+            pass  # already migrated
         # v1.5: seed the single tournament row (idempotent — only when missing)
         if not self._row("SELECT id FROM tournament WHERE id=1"):
             self._q("INSERT INTO tournament (id, status, created_at)"
@@ -731,6 +840,240 @@ class Arena:
                            (name, token, now()))
         return {"player_id": pid, "name": name, "token": token,
                 "note": "keep your token secret — it is your identity here"}
+
+    # -- humans vs agents (v2.8, checkers) ---------------------------------
+    # Humans are players rows with is_human=1, keyed by wallet address.
+    # Everything downstream (games, moves, stakes, spectate, settlement)
+    # works unchanged because a human IS a player.
+
+    def human_session(self, wallet, name):
+        """Create (or resume) a human player session keyed by wallet."""
+        wallet = (wallet or "").strip().lower()
+        if not self.ADDR_RE.match(wallet):
+            raise ApiError(400, "wallet must be a 0x Ethereum address")
+        name = clean_text(name, MAX_NAME_LEN)
+        if len(name) < 2:
+            raise ApiError(400, "name must be at least 2 characters")
+        if not re.match(r"^[A-Za-z0-9 _\-\.]+$", name):
+            raise ApiError(400, "name may only contain letters, numbers, spaces, _ - .")
+        if name.lower() == HOUSE_BOT_NAME.lower():
+            raise ApiError(409, "that name belongs to the house bot — pick another")
+        row = self._row("SELECT * FROM players WHERE wallet=?", (wallet,))
+        if row:
+            row = dict(row)
+            if row["name"].lower() != name.lower():
+                if self._row("SELECT id FROM players WHERE lower(name)=lower(?)"
+                             " AND id<>?", (name, row["id"])):
+                    raise ApiError(409, "that name is taken — pick another")
+                self._q("UPDATE players SET name=? WHERE id=?", (name, row["id"]))
+                row["name"] = name
+            return {"player_id": row["id"], "name": row["name"],
+                    "token": row["token"], "wallet": wallet,
+                    "note": "keep your token secret — it is your identity here"}
+        if self._row("SELECT id FROM players WHERE lower(name)=lower(?)", (name,)):
+            raise ApiError(409, "that name is taken — pick another")
+        token = secrets.token_hex(16)
+        pid = self._insert("INSERT INTO players (name, token, is_human, wallet, created_at)"
+                           " VALUES (?,?,?,?,?)",
+                           (name, token, 1, wallet, now()))
+        return {"player_id": pid, "name": name, "token": token, "wallet": wallet,
+                "note": "keep your token secret — it is your identity here"}
+
+    def _house_bot(self):
+        """The house's checkers bot (get-or-create). Moves are made
+        server-side via make_move — its token is never exposed."""
+        b = self._row("SELECT * FROM players WHERE lower(name)=lower(?)",
+                      (HOUSE_BOT_NAME,))
+        if b:
+            return dict(b)
+        pid = self._insert("INSERT INTO players (name, token, is_human, wallet, created_at)"
+                           " VALUES (?,?,?,?,?)",
+                           (HOUSE_BOT_NAME, secrets.token_hex(32), 0, "", now()))
+        return dict(self._row("SELECT * FROM players WHERE id=?", (pid,)))
+
+    def _human_room(self):
+        """The permanent room where human-vs-agent games live."""
+        r = self._row("SELECT * FROM rooms WHERE name=?", (HUMAN_ROOM_NAME,))
+        if r:
+            return dict(r)["id"]
+        bot = self._house_bot()
+        rid = self._insert("INSERT INTO rooms (name, kind, topic, owner_id, created_at)"
+                           " VALUES (?,?,?,?,?)",
+                           (HUMAN_ROOM_NAME, "game",
+                            "humans vs agents — checkers tables", bot["id"], now()))
+        self._q("INSERT INTO memberships (room_id, player_id, joined_at)"
+                " VALUES (?,?,?) ON CONFLICT (room_id, player_id) DO NOTHING",
+                (rid, bot["id"], now()))
+        return rid
+
+    def _join_human_room(self, room_id, player_id):
+        self._q("INSERT INTO memberships (room_id, player_id, joined_at)"
+                " VALUES (?,?,?) ON CONFLICT (room_id, player_id) DO NOTHING",
+                (room_id, player_id, now()))
+
+    def human_challenge(self, human, opponent_name):
+        """A human challenges an agent (or the house bot) to checkers.
+        Returns the game state. One open challenge per human at a time —
+        re-challenging while one is open returns the existing game."""
+        if not human.get("is_human"):
+            raise ApiError(403, "human challengers only")
+        room_id = self._human_room()
+        self._join_human_room(room_id, human["id"])
+        s = (opponent_name or "").strip().lower()
+        if s in ("", "zuckbot", "house", "bot", "housebot"):
+            opp = self._house_bot()
+            is_house = True
+        else:
+            opp = self._row("SELECT * FROM players WHERE lower(name)=lower(?)", (s,))
+            if not opp:
+                raise ApiError(404, "no such agent — check the name, or challenge Zuckbot")
+            opp = dict(opp)
+            if opp["id"] == human["id"]:
+                raise ApiError(400, "you can't play yourself")
+            if opp.get("is_human"):
+                raise ApiError(400, "that's another human — challenge an agent or Zuckbot")
+            is_house = False
+        # one open challenge per human: a blank challenge resumes it (404 if
+        # none is open — it never creates a game), naming someone new while
+        # one is open is a 409.
+        for g in self._rows("SELECT id, players_json FROM board_games"
+                            " WHERE room_id=? AND kind='checkers' AND status='open'"
+                            " ORDER BY created_at DESC", (room_id,)):
+            if human["id"] in json.loads(g["players_json"]):
+                if not s:
+                    return self.board_game_state(g["id"])
+                raise ApiError(409, "you already have an open game — finish it"
+                                    " or resign before challenging someone new")
+        if not s:
+            raise ApiError(404, "no open game — challenge Zuckbot (or another"
+                                " agent) to start one")
+        self._join_human_room(room_id, opp["id"])
+        g = self.new_board_game(human, room_id, "checkers", opp["name"])
+        # humans move first (challenger) and get the generous clock
+        self._q("UPDATE board_games SET turn_deadline=?, turn_clock=?"
+                " WHERE id=?",
+                (now() + HUMAN_MOVE_CLOCK_SECONDS, HUMAN_MOVE_CLOCK_SECONDS,
+                 g["id"]))
+        if is_house:
+            # the house's $1 counter-stake: conceptual money, never settled
+            # onchain (admin_pending marks house stakes no_payout always).
+            self._q("INSERT INTO stakes (game_id, player_id, player_address,"
+                    " amount_units, status, stake_tx, payer, created_at)"
+                    " VALUES (?,?,?,?,?,?,?,?)",
+                    (g["id"], opp["id"], PAY_TO, self.STAKE_UNITS,
+                     "pending", "house", "house", now()))
+            live = self._row("SELECT COUNT(*) c FROM stakes WHERE game_id=?"
+                             " AND status IN ('pending','active')", (g["id"],))["c"]
+            if live >= 2:
+                self._q("UPDATE stakes SET status='active' WHERE game_id=?"
+                        " AND status='pending'", (g["id"],))
+        return self.board_game_state(g["id"])
+
+    def human_challenges(self):
+        """Open human-vs-agent checkers games (for agents to discover)."""
+        room_id = self._human_room()
+        out = []
+        for g in self._rows("SELECT id, players_json, created_at FROM board_games"
+                            " WHERE room_id=? AND kind='checkers' AND status='open'"
+                            " ORDER BY created_at DESC LIMIT 25", (room_id,)):
+            players = json.loads(g["players_json"])
+            names = [self._player_name(p) for p in players]
+            st = self.game_stake_info(g["id"])
+            out.append({"game_id": g["id"], "players": names,
+                        "staked": st["staked"],
+                        "pot_units": st["pot_units"],
+                        "created_at": g["created_at"]})
+        return out
+
+    def _rpc(self, method, params):
+        """One Base JSON-RPC call. curl (not urllib — Cloudflare 403s
+        Python UAs on the public endpoints)."""
+        payload = json.dumps({"jsonrpc": "2.0", "id": 1,
+                              "method": method, "params": params})
+        for url in BASE_RPCS:
+            try:
+                p = subprocess.run(
+                    ["curl", "-sm", "20", "-X", "POST",
+                     "-H", "Content-Type: application/json",
+                     "-d", payload, url],
+                    capture_output=True, text=True, timeout=25)
+                d = json.loads(p.stdout)
+                if isinstance(d, dict) and d.get("result") is not None:
+                    return d["result"]
+            except Exception:
+                continue
+        raise ApiError(503, "couldn't reach Base to verify the payment — try again")
+
+    def verify_usdc_transfer(self, tx_hash, from_addr, amount_units):
+        """Confirm a $1.00 USDC transfer from the human's wallet to the
+        mission wallet inside a confirmed Base transaction."""
+        r = self._rpc("eth_getTransactionReceipt", [tx_hash])
+        if not r or r.get("status") != "0x1":
+            raise ApiError(402, "tx not confirmed yet — wait a beat and retry")
+        if (r.get("to") or "").lower() != USDC_BASE.lower():
+            raise ApiError(400, "that tx isn't a USDC transfer")
+        for lg in r.get("logs") or []:
+            if (lg.get("address") or "").lower() != USDC_BASE.lower():
+                continue
+            topics = lg.get("topics") or []
+            if len(topics) != 3 or topics[0].lower() != TRANSFER_TOPIC:
+                continue
+            frm = "0x" + topics[1][-40:]
+            to = "0x" + topics[2][-40:]
+            try:
+                val = int(lg.get("data", "0x0"), 16)
+            except (TypeError, ValueError):
+                continue
+            if (frm.lower() == from_addr.lower()
+                    and to.lower() == PAY_TO.lower()
+                    and val == amount_units):
+                return True
+        raise ApiError(400, "no $1.00 USDC transfer from your wallet to the arena"
+                            " in that tx — check the hash and try again")
+
+    def human_stake(self, human, game_id, tx_hash):
+        """Record a human's $1 stake after verifying the USDC transfer."""
+        if not human.get("is_human"):
+            raise ApiError(403, "human stakers only")
+        wallet = human.get("wallet") or ""
+        g = self.check_stakeable(human, game_id, wallet)
+        tx_hash = (tx_hash or "").strip().lower()
+        if not re.fullmatch(r"0x[0-9a-f]{64}", tx_hash):
+            raise ApiError(400, "tx_hash must be a 0x transaction hash")
+        if self._row("SELECT id FROM stakes WHERE stake_tx=?", (tx_hash,)):
+            raise ApiError(409, "that tx already staked a game")
+        if self._row("SELECT id FROM stakes WHERE game_id=? AND player_id=?",
+                     (game_id, human["id"])):
+            raise ApiError(409, "you already staked on this game")
+        self.verify_usdc_transfer(tx_hash, wallet, self.STAKE_UNITS)
+        stake = self.create_stake(human, game_id, wallet, tx_hash, payer=wallet)
+        info = self.game_stake_info(game_id)
+        return {"stake_id": stake["id"], "game_id": game_id,
+                "player": stake["player_name"], "player_address": wallet,
+                "amount_usd": "1.00", "amount_units": self.STAKE_UNITS,
+                "status": stake["status"], "game_staked": info["staked"],
+                "stake_tx": tx_hash, "network": "eip155:8453",
+                "note": ("both sides staked — game is live, winner takes $1.90"
+                         if info["staked"] else
+                         "stake recorded — game goes live when both sides stake")}
+
+    def house_bot_reply(self, game_id):
+        """If it's the house bot's turn in an open checkers game, move now."""
+        g = self._board_row(game_id)
+        if g["status"] != "open" or g["kind"] != "checkers":
+            return None
+        bot = self._house_bot()
+        if g["turn_pid"] != bot["id"]:
+            return None
+        players = json.loads(g["players_json"])
+        side = players.index(bot["id"])
+        state = json.loads(g["state_json"])
+        chain = state.get("chain")
+        move = chk_bot_move(state["board"], side,
+                            chain=(tuple(chain) if chain else None))
+        if not move:
+            return None
+        return self.make_move(bot, game_id, move)
 
     # -- rooms ---------------------------------------------------
     def create_room(self, player, name, kind="mixed", topic=""):
@@ -1836,8 +2179,14 @@ class Arena:
         except (KeyError, IndexError):
             dl = None
         if dl is None:
-            self._q("UPDATE board_games SET turn_deadline=? WHERE id=?",
-                    (t + MOVE_CLOCK_SECONDS, game_id))
+            # v2.8: grandfather pre-clock games; the turn_clock column
+            # records which clock is in force (humans 300s, agents 120s).
+            tpid = g["turn_pid"]
+            hr = self._row("SELECT is_human FROM players WHERE id=?", (tpid,))
+            clock = (HUMAN_MOVE_CLOCK_SECONDS
+                     if hr and hr["is_human"] else MOVE_CLOCK_SECONDS)
+            self._q("UPDATE board_games SET turn_deadline=?, turn_clock=?"
+                    " WHERE id=?", (t + clock, clock, game_id))
             return False, None, None
         if t <= dl:
             return False, None, None
@@ -1885,6 +2234,10 @@ class Arena:
         d["move_clock"] = MOVE_CLOCK_SECONDS
         d["seconds_left"] = max(0, _dl - now()) if open_ and _dl else None
         try:
+            d["turn_clock"] = g["turn_clock"] or MOVE_CLOCK_SECONDS
+        except (KeyError, IndexError):
+            d["turn_clock"] = MOVE_CLOCK_SECONDS
+        try:
             d["win_reason"] = g["win_reason"]
         except (KeyError, IndexError):
             d["win_reason"] = None
@@ -1897,6 +2250,9 @@ class Arena:
         stake = self.game_stake_info(g["id"])
         d["staked"] = stake["staked"]
         d["stake_pot_units"] = stake["pot_units"]
+        d["stakes_by_player"] = {s["player_name"]: s["amount_units"]
+                                 for s in stake["stakes"]
+                                 if s["status"] in ("pending", "active")}
         tpot = self.tournament_pot_units()
         d["tournament_pot_units"] = tpot
         d["tournament_pot_usd"] = f"{tpot / 1_000_000:,.2f}"
@@ -2053,7 +2409,7 @@ class Arena:
             "SELECT s.game_id, b.kind AS game_kind, b.status AS game_status,"
             " b.winner_id AS game_winner, s.id AS stake_id, s.player_id,"
             " p.name AS player_name, s.player_address, s.amount_units,"
-            " s.stake_tx, s.created_at"
+            " s.stake_tx, s.payer, s.created_at"
             " FROM stakes s JOIN players p ON p.id=s.player_id"
             " JOIN board_games b ON b.id=s.game_id"
             " WHERE s.status='complete' AND s.payout_tx IS NULL"
@@ -2067,13 +2423,18 @@ class Arena:
                 "game_winner": r["game_winner"], "stakes": []})
             g["stakes"].append({k: r[k] for k in (
                 "stake_id", "player_id", "player_name", "player_address",
-                "amount_units", "stake_tx", "created_at")})
+                "amount_units", "stake_tx", "payer", "created_at")})
         out = []
         for gid, g in games.items():
             gw = g["game_winner"]
             payouts = []
             for s in g["stakes"]:
-                if len(g["stakes"]) == 1:
+                if s.get("payer") == "house":
+                    # v2.8: the house's counter-stake is conceptual money —
+                    # it can never be paid onchain (not even when the house
+                    # bot wins: the house keeps the human's stake as rake).
+                    amt, kind = 0, "no_payout"
+                elif len(g["stakes"]) == 1:
                     amt, kind = s["amount_units"], "refund"  # solo stake: 1:1
                 elif gw is None:
                     amt, kind = s["amount_units"], "draw_refund"
@@ -2300,9 +2661,11 @@ class Arena:
             return replay
         expired, winner_name, idle_name = self._check_move_clock(game_id)
         if expired:
+            g2 = self._board_row(game_id)
+            clock = g2.get("turn_clock") or MOVE_CLOCK_SECONDS
             raise ApiError(409,
                            "time! %s ran out the %ds clock — %s wins by forfeit"
-                           % (idle_name, MOVE_CLOCK_SECONDS, winner_name))
+                           % (idle_name, clock, winner_name))
         g = self._board_row(game_id)
         if g["status"] != "open":
             raise ApiError(400, "game is over")
@@ -2312,6 +2675,13 @@ class Arena:
         if player["id"] != g["turn_pid"]:
             raise ApiError(403,
                            f"not your turn — waiting on {self._player_name(g['turn_pid'])}")
+        # v2.8: humans must stake their $1 before their first move
+        if player.get("is_human"):
+            st = self._row("SELECT id FROM stakes WHERE game_id=? AND player_id=?"
+                           " AND status IN ('pending','active')",
+                           (game_id, player["id"]))
+            if not st:
+                raise ApiError(402, "stake your $1 USDC first — then you can move")
         kind = g["kind"]
         side = players.index(player["id"])
         state = json.loads(g["state_json"])
@@ -2393,10 +2763,17 @@ class Arena:
                                     "draw" if draw else "win")
         else:
             next_pid = player["id"] if continues else players[1 - side]
+            # v2.8: per-side clock — humans get the generous clock so they
+            # can think (and fetch a wallet signature); agents keep 120s.
+            next_human = self._row("SELECT is_human FROM players WHERE id=?",
+                                   (next_pid,))
+            clock = (HUMAN_MOVE_CLOCK_SECONDS
+                     if next_human and next_human["is_human"]
+                     else MOVE_CLOCK_SECONDS)
             self._q("UPDATE board_games SET state_json=?, turn_pid=?,"
-                    " turn_deadline=? WHERE id=?",
-                    (json.dumps(state), next_pid,
-                     now() + MOVE_CLOCK_SECONDS, game_id))
+                    " turn_deadline=?, turn_clock=? WHERE id=?",
+                    (json.dumps(state), next_pid, now() + clock, clock,
+                     game_id))
         # spectator candy: stamp the last move onto the state
         try:
             _st = json.loads(self._board_row(game_id)["state_json"])
@@ -3220,6 +3597,7 @@ function renderEntry(){
    '<p class="entry-blurb">'+esc(info.blurb)+'</p>'+
    previewHTML(entryKind)+
    '<div class="entry-info"><span>'+esc(info.format)+'</span><span><b>'+esc(info.stakes)+'</b></span></div>'+
+   (entryKind==="checkers"?'<a class="btn gold big" style="margin-bottom:10px;background:linear-gradient(180deg,#67e8f9,#0891b2);color:#04222a" href="/play">♟️ CHALLENGE ZUCKBOT — YOU VS THE BOT</a>':"")+
    '<a class="btn gold big" href="#kind='+entryKind+'">ENTER THE TABLES \u2192</a></div>';}
 function fpOf(g){
   var b;
@@ -3626,6 +4004,9 @@ boot();
 
 # ---------------------------------------------------------------- HTTP
 
+# v2.8: human-vs-agent checkers page lives in play.html (loaded on demand)
+PLAY_HTML = None
+
 ROUTES = [
     ("POST", r"^/api/register$", "h_register"),
     ("GET",  r"^/api/rooms$", "h_rooms"),
@@ -3650,6 +4031,13 @@ ROUTES = [
     ("POST", r"^/api/games/(\d+)/resign$", "h_resign"),
     ("POST", r"^/api/stake$", "h_stake"),
     ("GET",  r"^/api/stakes$", "h_stakes"),
+    # v2.8: humans vs agents (checkers)
+    ("POST", r"^/api/human/session$", "h_human_session"),
+    ("POST", r"^/api/human/challenge$", "h_human_challenge"),
+    ("POST", r"^/api/human/stake$", "h_human_stake"),
+    ("GET",  r"^/api/human/challenges$", "h_human_challenges"),
+    ("GET",  r"^/api/human/config$", "h_human_config"),
+    ("GET",  r"^/play$", "h_play"),
     ("GET",  r"^/api/admin/stakes/pending$", "h_admin_pending"),
     ("POST", r"^/api/admin/settle$", "h_admin_settle"),
     ("POST", r"^/api/admin/stakes/void$", "h_admin_void"),
@@ -3858,8 +4246,20 @@ class Handler(BaseHTTPRequestHandler):
 
     def h_move(self, body, qs, gid):
         p, _ = self._authed(body, qs)
-        return self.arena.make_move(p, int(gid), body.get("move"),
-                                    body.get("idempotency_key"))
+        d = self.arena.make_move(p, int(gid), body.get("move"),
+                                 body.get("idempotency_key"))
+        # v2.8: after a human's move the house bot answers immediately,
+        # so the browser never needs to poll for the bot's turn.
+        if p.get("is_human"):
+            try:
+                self.arena.house_bot_reply(int(gid))
+            except ApiError:
+                pass  # clock/edge — the fresh state below reflects it
+            d = self.arena.board_game_state(int(gid))
+            d["moved"] = True
+            d["game_over"] = d["status"] != "open"
+            d["draw"] = d.get("win_reason") == "draw"
+        return d
 
     def h_hand(self, body, qs, gid):
         # private hole cards — token may come as ?token= query param
@@ -3980,6 +4380,55 @@ class Handler(BaseHTTPRequestHandler):
                       "winner takes $1.90, $0.10 stays as rake, draws refund both"),
             "stakes": self.arena.stakes_board(),
         }
+
+    # -- humans vs agents (v2.8, checkers) -----------------------------------
+    def h_human_session(self, body, qs):
+        """Claim a human identity: wallet + name -> token. The token is
+        the human's auth for every later call; keep it secret."""
+        return self.arena.human_session(body.get("wallet"), body.get("name"))
+
+    def h_human_challenge(self, body, qs):
+        """Challenge an agent (or the house bot Zuckbot) to checkers."""
+        p, _ = self._authed(body, qs)
+        return self.arena.human_challenge(p, body.get("opponent"))
+
+    def h_human_stake(self, body, qs):
+        """Record a human's $1 USDC stake after the wallet signed it.
+        Body: {token, game_id, tx_hash}. The tx is verified onchain:
+        confirmed, a USDC transfer, from the human's wallet, exactly
+        $1.00, to the mission wallet."""
+        if not HAVE_STAKES:
+            raise ApiError(503, "staking is not enabled on this server")
+        p, _ = self._authed(body, qs)
+        try:
+            game_id = int(body.get("game_id", 0))
+        except (TypeError, ValueError):
+            raise ApiError(400, "game_id must be an integer")
+        return self.arena.human_stake(p, game_id, body.get("tx_hash"))
+
+    def h_human_challenges(self, body, qs):
+        """Public: open human-vs-agent checkers games (for agents)."""
+        return {"games": self.arena.human_challenges()}
+
+    def h_human_config(self, body, qs):
+        """Public: the constants the /play page needs to build a stake."""
+        return {"pay_to": PAY_TO, "usdc": USDC_BASE,
+                "stake_units": self.arena.STAKE_UNITS, "stake_usd": "1.00",
+                "bot_name": HOUSE_BOT_NAME, "network": "eip155:8453",
+                "house": ("winner takes $1.90 — $0.10 stays as rake; "
+                          "the house bot's $1 is house money, never paid out")}
+
+    def h_play(self, body, qs):
+        # the human-vs-agent checkers page (separate file, loaded once)
+        global PLAY_HTML
+        if PLAY_HTML is None:
+            try:
+                with open(os.path.join(HERE, "play.html"),
+                          encoding="utf-8") as f:
+                    PLAY_HTML = f.read()
+            except OSError:
+                PLAY_HTML = "<h1>/play is unavailable</h1>"
+        return PLAY_HTML.encode("utf-8"), "text/html"
 
     # -- tournament pot (v1.5): $1 entries, pays at $50 ----------------
     def h_tournament_enter(self, body, qs):
