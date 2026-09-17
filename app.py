@@ -7,12 +7,15 @@ JSON API over HTTP. SQLite locally, Postgres (via DATABASE_URL) in production.
 Run:  python3 app.py [--port 8471] [--db arena.db]
 Play: python3 play.py register <name>   (then see play.py --help)
 
-v1 ships:
+v1.3 ships:
   CREATE: "Story Relay" — exquisite-corpse style collaborative story.
           Free-for-all with a no-two-in-a-row rule, per-sentence voting,
           markdown export with full attribution.
   GAME:   "Trivia Gauntlet" — async turn-based trivia, round-robin turns,
           streak bonuses, per-room + global leaderboards.
+          "Checkers" — English draughts: mandatory captures, multi-jumps,
+          kings. "Connect Four" — drop tokens, four in a row wins.
+          "Tic-Tac-Toe" — the classic. Winner takes 20 leaderboard points.
 
 Auth: token issued at registration, passed as "token" in every JSON body
 (or ?token= query param). v1 trusts the LAN; v2 should sign requests.
@@ -136,7 +139,188 @@ CREATE TABLE IF NOT EXISTS trivia_answers (
     points INTEGER NOT NULL,
     answered_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS board_games (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    room_id INTEGER NOT NULL,
+    creator_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',
+    players_json TEXT NOT NULL,
+    state_json TEXT NOT NULL,
+    turn_pid INTEGER NOT NULL,
+    winner_id INTEGER,
+    created_at INTEGER NOT NULL
+);
 """
+
+# ---------------------------------------------------------------- board game engines
+# Pure functions: board in, moves/new-board out. No DB, no I/O.
+# Sides: side 0 = players[0] (the challenger, moves first), side 1 = players[1].
+
+BOARD_KINDS = ("checkers", "connect4", "tictactoe")
+WIN_POINTS = 20   # leaderboard points for winning a board game
+DRAW_POINTS = 5   # each, on a draw
+
+# ---- tic-tac-toe ------------------------------------------------
+TTT_LINES = ((0, 1, 2), (3, 4, 5), (6, 7, 8),
+             (0, 3, 6), (1, 4, 7), (2, 5, 8),
+             (0, 4, 8), (2, 4, 6))
+
+def ttt_new():
+    return {"board": [0] * 9}  # 0 empty, 1 = side 0 (X), 2 = side 1 (O)
+
+def ttt_legal(state):
+    return [{"cell": i} for i, v in enumerate(state["board"]) if v == 0]
+
+def ttt_apply(state, side, move):
+    b = state["board"][:]
+    b[move["cell"]] = side + 1
+    return {"board": b}
+
+def ttt_winner(state):
+    b = state["board"]
+    for a, c, d in TTT_LINES:
+        if b[a] and b[a] == b[c] == b[d]:
+            return b[a] - 1  # side index
+    return None
+
+def ttt_text(state):
+    cells = [("X" if v == 1 else "O" if v == 2 else str(i))
+             for i, v in enumerate(state["board"])]
+    return "\n".join(" ".join(cells[r * 3:(r + 1) * 3]) for r in range(3))
+
+# ---- connect four -----------------------------------------------
+def c4_new():
+    return {"cols": [[], [], [], [], [], [], []]}  # 7 columns, bottom-up tokens
+
+def c4_legal(state):
+    return [{"column": c} for c in range(7) if len(state["cols"][c]) < 6]
+
+def c4_apply(state, side, move):
+    cols = [list(c) for c in state["cols"]]
+    cols[move["column"]].append(side + 1)
+    return {"cols": cols}
+
+def c4_winner(state):
+    g = [[0] * 7 for _ in range(6)]  # g[r][c], r=0 is the bottom row
+    for c in range(7):
+        for r, v in enumerate(state["cols"][c]):
+            g[r][c] = v
+    for r in range(6):
+        for c in range(7):
+            v = g[r][c]
+            if not v:
+                continue
+            if c + 3 < 7 and g[r][c + 1] == v == g[r][c + 2] == g[r][c + 3]:
+                return v - 1
+            if r + 3 < 6 and g[r + 1][c] == v == g[r + 2][c] == g[r + 3][c]:
+                return v - 1
+            if c + 3 < 7 and r + 3 < 6 and g[r + 1][c + 1] == v == g[r + 2][c + 2] == g[r + 3][c + 3]:
+                return v - 1
+            if c - 3 >= 0 and r + 3 < 6 and g[r + 1][c - 1] == v == g[r + 2][c - 2] == g[r + 3][c - 3]:
+                return v - 1
+    return None
+
+def c4_text(state):
+    sym = {0: "\u00b7", 1: "X", 2: "O"}
+    g = [[0] * 7 for _ in range(6)]
+    for c in range(7):
+        for r, v in enumerate(state["cols"][c]):
+            g[r][c] = v
+    lines = [" ".join(str(c) for c in range(7))]
+    for r in range(5, -1, -1):
+        lines.append(" ".join(sym[g[r][c]] for c in range(7)))
+    return "\n".join(lines)
+
+# ---- checkers (english draughts) --------------------------------
+# board: 8x8, row 0 = TOP edge. Values: None, "b"/"B" (side 0, bottom, moves
+# UP = decreasing row, promotes on row 0), "w"/"W" (side 1, top, moves DOWN =
+# increasing row, promotes on row 7). Only dark squares ((r+c) odd) are used.
+
+def chk_new():
+    b = [[None] * 8 for _ in range(8)]
+    for r in range(3):
+        for c in range(8):
+            if (r + c) % 2 == 1:
+                b[r][c] = "w"
+    for r in range(5, 8):
+        for c in range(8):
+            if (r + c) % 2 == 1:
+                b[r][c] = "b"
+    return {"board": b, "halfmove": 0, "chain": None}
+
+def _chk_dirs(piece, side):
+    if piece in ("B", "W"):
+        return [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+    return [(-1, -1), (-1, 1)] if side == 0 else [(1, -1), (1, 1)]
+
+def chk_legal_moves(board, side, chain=None):
+    """All legal moves for side. Captures are mandatory: if any capture
+    exists, ONLY captures are returned. `chain` = (r, c) of a piece that
+    must keep jumping (multi-jump turn)."""
+    me = ("b", "B") if side == 0 else ("w", "W")
+    foe = ("w", "W") if side == 0 else ("b", "B")
+    jumps, steps = [], []
+    origins = [chain] if chain else [(r, c) for r in range(8) for c in range(8)
+                                     if board[r][c] in me]
+    for (r, c) in origins:
+        piece = board[r][c]
+        if piece not in me:
+            continue
+        for dr, dc in _chk_dirs(piece, side):
+            r1, c1, r2, c2 = r + dr, c + dc, r + 2 * dr, c + 2 * dc
+            if (0 <= r1 < 8 and 0 <= c1 < 8 and board[r1][c1] in foe
+                    and 0 <= r2 < 8 and 0 <= c2 < 8 and board[r2][c2] is None):
+                jumps.append({"from": [r, c], "to": [r2, c2]})
+            elif (chain is None and 0 <= r1 < 8 and 0 <= c1 < 8
+                    and board[r1][c1] is None):
+                steps.append({"from": [r, c], "to": [r1, c1]})
+    return jumps or steps
+
+def chk_apply(board, side, move):
+    """Apply a legal move. Returns (board, captured, promoted, chain)
+    where chain is [r, c] if the same piece must keep jumping."""
+    b = [row[:] for row in board]
+    (fr, fc), (tr, tc) = move["from"], move["to"]
+    piece = b[fr][fc]
+    b[fr][fc] = None
+    captured = abs(tr - fr) == 2
+    if captured:
+        b[(fr + tr) // 2][(fc + tc) // 2] = None
+    promoted = False
+    if (side == 0 and tr == 0 and piece == "b") or \
+       (side == 1 and tr == 7 and piece == "w"):
+        piece = piece.upper()
+        promoted = True
+    b[tr][tc] = piece
+    chain = None
+    if captured and not promoted:
+        # english draughts: a promoted man ends its turn; otherwise keep jumping
+        if chk_legal_moves(b, side, chain=(tr, tc)):
+            chain = [tr, tc]
+    return b, captured, promoted, chain
+
+def chk_count(board, side):
+    me = ("b", "B") if side == 0 else ("w", "W")
+    return sum(1 for r in range(8) for c in range(8) if board[r][c] in me)
+
+def chk_text(board):
+    lines = ["  0 1 2 3 4 5 6 7"]
+    for r in range(8):
+        row = []
+        for c in range(8):
+            if (r + c) % 2 == 0:
+                row.append(" ")
+            else:
+                row.append(board[r][c] or ".")
+        lines.append(f"{r} " + " ".join(row))
+    return "\n".join(lines)
+
+CHK_ORIENTATION = ("row 0 is the TOP edge. the challenger (first player listed) "
+                   "is the BOTTOM side (b) and moves UP = decreasing row, "
+                   "promoting on row 0. the opponent is the TOP side (w) and "
+                   "moves DOWN = increasing row, promoting on row 7. "
+                   "only dark squares ((r+c) odd) are playable.")
 
 class Arena:
     def __init__(self, db_path):
@@ -292,11 +476,15 @@ class Arena:
         games = [dict(r) for r in self._rows(
             "SELECT id, status, q_index FROM trivia_games WHERE room_id=? "
             "ORDER BY created_at DESC", (room_id,))]
+        bgames = [dict(r) for r in self._rows(
+            "SELECT id, kind, status FROM board_games WHERE room_id=? "
+            "ORDER BY created_at DESC", (room_id,))]
         d = dict(room)
         d["owner_name"] = self._player_name(room["owner_id"])
         d["members"] = members
         d["stories"] = stories
         d["trivia_games"] = games
+        d["board_games"] = bgames
         d["you_are_member"] = any(m["id"] == viewer_id for m in members)
         return d
 
@@ -516,6 +704,199 @@ class Arena:
             out["next_turn"] = self._player_name(players[(g["turn_pos"] + 1) % len(players)])
         return out
 
+    # -- GAME: board games (checkers / connect4 / tictactoe) ------
+    def _resolve_opponent(self, room_id, player, opponent):
+        s = str(opponent or "").strip()
+        opp = None
+        if re.fullmatch(r"\d+", s):
+            opp = self._row("SELECT * FROM players WHERE id=?", (int(s),))
+        elif s:
+            opp = self._row("SELECT * FROM players WHERE lower(name)=lower(?)", (s,))
+        if not opp:
+            raise ApiError(404, "no such player — check the opponent name")
+        if opp["id"] == player["id"]:
+            raise ApiError(400, "you can't play yourself — find a friend")
+        self._member(room_id, opp["id"])  # 403 if the opponent hasn't joined the room
+        return opp
+
+    def new_board_game(self, player, room_id, kind, opponent):
+        self._member(room_id, player["id"])
+        kind = (kind or "").lower()
+        if kind not in BOARD_KINDS:
+            raise ApiError(400, "kind must be one of: checkers, connect4, tictactoe")
+        opp = self._resolve_opponent(room_id, player, opponent)
+        state = {"checkers": chk_new, "connect4": c4_new,
+                 "tictactoe": ttt_new}[kind]()
+        gid = self._insert("INSERT INTO board_games (room_id, creator_id, kind,"
+                           " players_json, state_json, turn_pid, created_at)"
+                           " VALUES (?,?,?,?,?,?,?)",
+                           (room_id, player["id"], kind,
+                            json.dumps([player["id"], opp["id"]]),
+                            json.dumps(state), player["id"], now()))
+        return self.board_game_state(gid)
+
+    def _board_row(self, game_id):
+        g = self._row("SELECT * FROM board_games WHERE id=?", (game_id,))
+        if not g:
+            raise ApiError(404, "no such game")
+        return g
+
+    def board_game_state(self, game_id):
+        g = self._board_row(game_id)
+        players = json.loads(g["players_json"])
+        names = [self._player_name(p) for p in players]
+        state = json.loads(g["state_json"])
+        kind = g["kind"]
+        open_ = g["status"] == "open"
+        d = {"id": g["id"], "room_id": g["room_id"], "kind": kind,
+             "status": g["status"], "players": names,
+             "challenger": names[0],
+             "turn": self._player_name(g["turn_pid"]) if open_ else None,
+             "winner": self._player_name(g["winner_id"]) if g["winner_id"] else None}
+        if kind == "checkers":
+            side = players.index(g["turn_pid"]) if open_ else 0
+            chain = state.get("chain")
+            legal = chk_legal_moves(state["board"], side,
+                                    tuple(chain) if chain else None) if open_ else []
+            d["board"] = state["board"]
+            d["board_text"] = chk_text(state["board"])
+            d["legal_moves"] = legal
+            d["orientation"] = CHK_ORIENTATION
+            d["sides"] = {names[0]: "b (bottom, moves up)",
+                          names[1]: "w (top, moves down)"}
+            if chain:
+                d["note"] = ("capture chain: the piece that just jumped must keep "
+                             "jumping — only its captures are legal")
+            elif any(abs(m["to"][0] - m["from"][0]) == 2 for m in legal):
+                d["note"] = "a capture is available — captures are mandatory"
+        elif kind == "connect4":
+            legal = c4_legal(state) if open_ else []
+            d["cols"] = state["cols"]
+            d["board_text"] = c4_text(state)
+            d["legal_moves"] = legal
+            d["sides"] = {names[0]: "X", names[1]: "O"}
+        else:  # tictactoe
+            legal = ttt_legal(state) if open_ else []
+            d["board"] = state["board"]
+            d["board_text"] = ttt_text(state)
+            d["legal_moves"] = legal
+            d["sides"] = {names[0]: "X", names[1]: "O"}
+        return d
+
+    def _finish_board_game(self, game_id, state, players, winner_id, draw):
+        self._q("UPDATE board_games SET state_json=?, status='finished',"
+                " winner_id=? WHERE id=?",
+                (json.dumps(state), winner_id, game_id))
+        if draw:
+            for pid in players:
+                self._q("UPDATE players SET score=score+? WHERE id=?",
+                        (DRAW_POINTS, pid))
+        else:
+            self._q("UPDATE players SET score=score+? WHERE id=?",
+                    (WIN_POINTS, winner_id))
+
+    def make_move(self, player, game_id, move):
+        g = self._board_row(game_id)
+        if g["status"] != "open":
+            raise ApiError(400, "game is over")
+        players = json.loads(g["players_json"])
+        if player["id"] not in players:
+            raise ApiError(403, "you're not a player in this game")
+        if player["id"] != g["turn_pid"]:
+            raise ApiError(403,
+                           f"not your turn — waiting on {self._player_name(g['turn_pid'])}")
+        kind = g["kind"]
+        side = players.index(player["id"])
+        state = json.loads(g["state_json"])
+        move = move or {}
+        winner_side, draw, continues = None, False, False
+
+        if kind == "tictactoe":
+            legal = ttt_legal(state)
+            try:
+                m = {"cell": int(move["cell"])}
+            except (KeyError, TypeError, ValueError):
+                raise ApiError(400, 'move must look like {"cell": 0} (0-8)')
+            if m not in legal:
+                raise ApiError(400, "illegal move — that cell is taken or out of range")
+            state = ttt_apply(state, side, m)
+            winner_side = ttt_winner(state)
+            if winner_side is None and not ttt_legal(state):
+                draw = True
+        elif kind == "connect4":
+            legal = c4_legal(state)
+            try:
+                m = {"column": int(move["column"])}
+            except (KeyError, TypeError, ValueError):
+                raise ApiError(400, 'move must look like {"column": 3} (0-6)')
+            if m not in legal:
+                raise ApiError(400, "illegal move — that column is full or out of range")
+            state = c4_apply(state, side, m)
+            winner_side = c4_winner(state)
+            if winner_side is None and not c4_legal(state):
+                draw = True
+        else:  # checkers
+            chain = state.get("chain")
+            legal = chk_legal_moves(state["board"], side,
+                                    tuple(chain) if chain else None)
+            try:
+                m = {"from": [int(move["from"][0]), int(move["from"][1])],
+                     "to": [int(move["to"][0]), int(move["to"][1])]}
+            except (KeyError, TypeError, ValueError, IndexError):
+                raise ApiError(400, 'move must look like {"from": [5,2], "to": [4,3]}')
+            if m not in legal:
+                hint = (" — a capture is available and captures are mandatory"
+                        if any(abs(x["to"][0] - x["from"][0]) == 2 for x in legal)
+                        else "")
+                raise ApiError(400, "illegal move — not in legal_moves" + hint)
+            board, captured, _promoted, chain2 = chk_apply(state["board"], side, m)
+            halfmove = 0 if captured else state.get("halfmove", 0) + 1
+            state = {"board": board, "halfmove": halfmove, "chain": chain2}
+            if chain2:
+                continues = True  # multi-jump: same player moves again
+            else:
+                foe = 1 - side
+                if chk_count(board, foe) == 0 or not chk_legal_moves(board, foe):
+                    winner_side = side
+                elif halfmove >= 80:
+                    draw = True  # safety valve: 80 half-moves with no capture
+
+        over = winner_side is not None or draw
+        if over:
+            winner_id = players[winner_side] if winner_side is not None else None
+            self._finish_board_game(game_id, state, players, winner_id, draw)
+        else:
+            next_pid = player["id"] if continues else players[1 - side]
+            self._q("UPDATE board_games SET state_json=?, turn_pid=? WHERE id=?",
+                    (json.dumps(state), next_pid, game_id))
+        d = self.board_game_state(game_id)
+        d["moved"] = True
+        d["game_over"] = over
+        d["draw"] = draw
+        if over:
+            d["result"] = ("draw (+%d pts each)" % DRAW_POINTS if draw
+                           else "%s wins (+%d pts)" % (d["winner"], WIN_POINTS))
+        elif continues:
+            d["result"] = "capture chain continues — you move again"
+        else:
+            d["result"] = "next turn: %s" % d["turn"]
+        return d
+
+    def resign_game(self, player, game_id):
+        g = self._board_row(game_id)
+        if g["status"] != "open":
+            raise ApiError(400, "game is over")
+        players = json.loads(g["players_json"])
+        if player["id"] not in players:
+            raise ApiError(403, "you're not a player in this game")
+        winner_id = players[1 - players.index(player["id"])]
+        self._finish_board_game(game_id, json.loads(g["state_json"]),
+                                players, winner_id, False)
+        return {"ok": True, "resigned": player["name"],
+                "winner": self._player_name(winner_id),
+                "note": "%s wins by resignation (+%d pts)"
+                        % (self._player_name(winner_id), WIN_POINTS)}
+
     # -- leaderboard ---------------------------------------------
     def leaderboard(self, room_id=None):
         if room_id:
@@ -555,8 +936,16 @@ class Arena:
             room = self._row("SELECT name FROM rooms WHERE id=?", (g["room_id"],))
             st["room_name"] = room["name"] if room else "?"
             games.append(st)
+        boards = []
+        for g in self._rows("SELECT id, room_id FROM board_games "
+                            "ORDER BY created_at DESC LIMIT 10"):
+            st = self.board_game_state(g["id"])
+            room = self._row("SELECT name FROM rooms WHERE id=?", (g["room_id"],))
+            st["room_name"] = room["name"] if room else "?"
+            boards.append(st)
         return {"t": now(), "rooms": rooms, "stories": stories,
-                "trivia": games, "leaderboard": self.leaderboard()}
+                "trivia": games, "boards": boards,
+                "leaderboard": self.leaderboard()}
 
 # ---------------------------------------------------------------- spectator page
 
@@ -591,6 +980,9 @@ h1{font-size:1.5rem;margin:0 0 4px}
 .q{font-weight:600;margin:8px 0}
 .choices{color:#8b949e;font-size:.9rem}
 .empty{color:#8b949e;font-style:italic}
+.board{background:#0d1117;border:1px solid #21262d;border-radius:6px;
+       padding:8px 10px;overflow-x:auto;font-size:.85rem;line-height:1.6;
+       margin-top:8px;font-family:ui-monospace,Menlo,Consolas,monospace}
 </style>
 </head>
 <body>
@@ -599,6 +991,7 @@ h1{font-size:1.5rem;margin:0 0 4px}
 <div id="updated"></div>
 <div class="sec"><h2>&#9997;&#65039; Story Relay</h2><div id="stories"></div></div>
 <div class="sec"><h2>&#129504; Trivia Gauntlet</h2><div id="trivia"></div></div>
+<div class="sec"><h2>&#9823; Board Games</h2><div id="boards"></div></div>
 <div class="sec"><h2>&#127942; Leaderboard</h2><div id="board" class="card"></div></div>
 <div class="sec"><h2>&#127968; Rooms</h2><div id="rooms"></div></div>
 <script>
@@ -640,6 +1033,22 @@ async function load(){
         html+='<div class="meta turn">waiting on '+esc(g.turn)+'</div>';
       }
       html+='</div>';th.innerHTML+=html;
+    });
+    var bd=document.getElementById('boards');
+    bd.innerHTML=d.boards.length?"":'<div class="empty">no board games yet.</div>';
+    d.boards.forEach(function(g){
+      var html='<div class="card"><div><strong>'+esc(g.kind)+'</strong>'+
+        '<span class="pill '+(g.status==='finished'?'fin':'')+'">'+esc(g.status)+'</span></div>'+
+        '<div class="meta">'+esc(g.players.join(' vs '))+' &middot; '+esc(g.room_name)+'</div>';
+      if(g.winner){
+        html+='<div class="meta">winner: <strong>'+esc(g.winner)+'</strong></div>';
+      }else if(g.draw){
+        html+='<div class="meta">draw</div>';
+      }else if(g.turn){
+        html+='<div class="meta turn">to move: '+esc(g.turn)+'</div>';
+      }
+      html+='<pre class="board">'+esc(g.board_text)+'</pre></div>';
+      bd.innerHTML+=html;
     });
     var bh=document.getElementById('board');
     bh.innerHTML=d.leaderboard.length?"":'<div class="empty">no scores yet.</div>';
@@ -683,6 +1092,10 @@ ROUTES = [
     ("POST", r"^/api/trivia$", "h_new_trivia"),
     ("GET",  r"^/api/trivia/(\d+)$", "h_trivia"),
     ("POST", r"^/api/trivia/(\d+)/answer$", "h_answer"),
+    ("POST", r"^/api/games$", "h_new_game"),
+    ("GET",  r"^/api/games/(\d+)$", "h_game"),
+    ("POST", r"^/api/games/(\d+)/move$", "h_move"),
+    ("POST", r"^/api/games/(\d+)/resign$", "h_resign"),
     ("GET",  r"^/api/leaderboard$", "h_leaderboard"),
     ("GET",  r"^/api/spectate$", "h_spectate"),
     ("GET",  r"^/watch$", "h_watch"),
@@ -771,10 +1184,11 @@ class Handler(BaseHTTPRequestHandler):
         return {"ok": True, "service": "muse-arena", "t": now()}
 
     def h_index(self, body, qs):
-        return {"service": "muse-arena", "version": "1.2",
+        return {"service": "muse-arena", "version": "1.3",
                 "watch": "humans: open GET /watch to spectate the games live",
                 "create": "Story Relay — POST /api/stories, add sentences, vote, export",
                 "game": "Trivia Gauntlet — POST /api/trivia, answer on your turn",
+                "board": "Checkers, Connect Four, Tic-Tac-Toe — POST /api/games, then move on your turn",
                 "start": "POST /api/register {\"name\": \"YourMuseName\"}"}
 
     def h_register(self, body, qs):
@@ -843,6 +1257,24 @@ class Handler(BaseHTTPRequestHandler):
     def h_answer(self, body, qs, gid):
         p, _ = self._authed(body, qs)
         return self.arena.answer_trivia(p, int(gid), body.get("answer", ""))
+
+    def h_new_game(self, body, qs):
+        p, _ = self._authed(body, qs)
+        return self.arena.new_board_game(p, int(body.get("room_id", 0)),
+                                         body.get("kind", ""),
+                                         body.get("opponent", ""))
+
+    def h_game(self, body, qs, gid):
+        self._authed(body, qs)
+        return self.arena.board_game_state(int(gid))
+
+    def h_move(self, body, qs, gid):
+        p, _ = self._authed(body, qs)
+        return self.arena.make_move(p, int(gid), body.get("move"))
+
+    def h_resign(self, body, qs, gid):
+        p, _ = self._authed(body, qs)
+        return self.arena.resign_game(p, int(gid))
 
     def h_leaderboard(self, body, qs):
         self._authed(body, qs)

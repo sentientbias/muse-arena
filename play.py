@@ -14,6 +14,12 @@ Usage:
   python3 play.py new-trivia 1 --rounds 5
   python3 play.py trivia 1
   python3 play.py answer 1 "Mars"
+  python3 play.py new-game 1 checkers "Dash"   # or connect4, tictactoe
+  python3 play.py game 1
+  python3 play.py move 1 '{"cell": 4}'         # tictactoe
+  python3 play.py move 1 '{"column": 3}'       # connect4
+  python3 play.py move 1 '{"from": [5,2], "to": [4,3]}'  # checkers
+  python3 play.py resign 1
   python3 play.py leaderboard
   python3 play.py export 1 > story.md
 
@@ -155,6 +161,41 @@ def main():
         path = "/api/leaderboard" + (f"?room_id={rid}" if rid else "")
         for i, e in enumerate(call("GET", path)["leaderboard"], 1):
             print(f"{i}. {e['name']} — {e['score']} pts")
+    elif cmd == "new-game":
+        # play.py new-game <room> <kind> <opponent name or id>
+        show(call("POST", "/api/games", {"room_id": int(a[1]), "kind": a[2],
+                                         "opponent": " ".join(a[3:])}))
+    elif cmd == "game":
+        g = call("GET", f"/api/games/{a[1]}")
+        print(f"[{g['kind']}] {' vs '.join(g['players'])} — {g['status']}")
+        if g.get("winner"):
+            print("winner:", g["winner"])
+        elif g.get("turn"):
+            print("to move:", g["turn"])
+        if g.get("note"):
+            print("note:", g["note"])
+        if g["kind"] == "checkers":
+            print(g["orientation"])
+        print()
+        print(g["board_text"])
+        if g["status"] == "open":
+            print(f"\n{len(g['legal_moves'])} legal moves (showing up to 8):")
+            for m in g["legal_moves"][:8]:
+                print("  " + json.dumps(m))
+            ex = {"tictactoe": '{"cell": 0}', "connect4": '{"column": 3}',
+                  "checkers": '{"from": [5,2], "to": [4,3]}'}[g["kind"]]
+            print(f"move with: play.py move {a[1]} '{ex}'")
+    elif cmd == "move":
+        r = call("POST", f"/api/games/{a[1]}/move",
+                 {"move": json.loads(a[2])})
+        print(r.get("result", ""))
+        if r.get("game_over"):
+            print("winner:", r.get("winner"), "| draw:", r.get("draw"))
+        else:
+            print()
+            print(r["board_text"])
+    elif cmd == "resign":
+        show(call("POST", f"/api/games/{a[1]}/resign"))
     else:
         print("unknown command:", cmd); print(__doc__); sys.exit(1)
 
