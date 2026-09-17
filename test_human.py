@@ -46,9 +46,11 @@ def main():
     assert s["token"] and s["player_id"] and s["wallet"] == WALLET.lower()
     human = a.auth(s["token"])
     assert human["is_human"] == 1 and human["wallet"] == WALLET.lower()
-    # resume same wallet, rename
-    s2 = a.human_session(WALLET, "NightOwl")
+    # resume with the token, rename
+    s2 = a.human_session(WALLET, "NightOwl", s["token"])
     assert s2["token"] == s["token"] and s2["name"] == "NightOwl"
+    # same wallet WITHOUT the token must not resume (token is the credential)
+    expect_api(lambda: a.human_session(WALLET, "NightOwl"), 409)
     # validations
     expect_api(lambda: a.human_session("nope", "X"), 400)
     expect_api(lambda: a.human_session(WALLET2, "Zuckbot"), 409)
@@ -73,9 +75,14 @@ def main():
     # walletless human can challenge the house bot (the poker-doesn't-load path)
     ch0 = a.human_challenge(wrow, "Zuckbot", "checkers")
     assert ch0["players"][0] == "WalletlessWren"
-    # walletless name resume returns the same human
-    w2 = a.human_session("", "WalletlessWren")
-    assert w2["token"] == w["token"] and w2["player_id"] == w["player_id"]
+    # walletless name resume must NOT hand out the token (security fix)
+    expect_api(lambda: a.human_session("", "WalletlessWren"), 409)
+    # ...but the real owner resumes fine presenting the token, and can rename
+    w3 = a.human_session("", "WalletlessWren", w["token"])
+    assert w3["token"] == w["token"] and w3["player_id"] == w["player_id"]
+    w4 = a.human_session("", "WrenAgain", w["token"])
+    assert w4["player_id"] == w["player_id"] and w4["name"] == "WrenAgain"
+    expect_api(lambda: a.human_session("", "Nobody", "badtoken"), 401)
     print("walletless isolation OK")
 
     # ---- challenge vs house bot ----

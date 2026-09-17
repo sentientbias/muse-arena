@@ -846,16 +846,16 @@ class Arena:
     # Everything downstream (games, moves, stakes, spectate, settlement)
     # works unchanged because a human IS a player.
 
-    def human_session(self, wallet, name):
+    def human_session(self, wallet, name, token=None):
         """Create (or resume) a human player session.
 
         Wallet is OPTIONAL — a visitor claims a table name and challenges
         before connecting a wallet; the wallet binds at stake time.
-        Resume is by wallet when one is given, otherwise by table name
-        (the token in localStorage is the primary identity; name resume
-        is a convenience for the same browser). Never matches on an
-        empty wallet: agent and house rows also have wallet='' and must
-        never be renamed into a human seat.
+        The session TOKEN is the only resume credential. A table name is
+        public (shown in the lobby), so resuming by name alone would hand
+        anyone who retypes a name that player's secret token — that hole
+        is closed: without a token, a taken name (or a seated wallet) is
+        a 409, never a token handoff.
         """
         wallet = (wallet or "").strip().lower()
         if wallet and not self.ADDR_RE.match(wallet):
@@ -867,13 +867,12 @@ class Arena:
             raise ApiError(400, "name may only contain letters, numbers, spaces, _ - .")
         if name.lower() == HOUSE_BOT_NAME.lower():
             raise ApiError(409, "that name belongs to the house bot — pick another")
-        if wallet:
-            row = self._row("SELECT * FROM players WHERE wallet=?", (wallet,))
-        else:
-            # walletless: resume by table name (humans only)
-            row = self._row("SELECT * FROM players WHERE lower(name)=lower(?)"
-                            " AND is_human=1", (name,))
-        if row:
+        token = (token or "").strip()
+        if token:
+            row = self._row("SELECT * FROM players WHERE token=? AND is_human=1",
+                            (token,))
+            if not row:
+                raise ApiError(401, "session expired — claim your seat again")
             row = dict(row)
             if row["name"].lower() != name.lower():
                 if self._row("SELECT id FROM players WHERE lower(name)=lower(?)"
@@ -884,13 +883,22 @@ class Arena:
             return {"player_id": row["id"], "name": row["name"],
                     "token": row["token"], "wallet": row.get("wallet") or "",
                     "note": "keep your token secret — it is your identity here"}
+        if wallet:
+            if self._row("SELECT id FROM players WHERE wallet=? AND is_human=1",
+                         (wallet,)):
+                raise ApiError(409, "this wallet already has a seat — resume from"
+                                    " the device where you claimed it")
+        elif self._row("SELECT id FROM players WHERE lower(name)=lower(?)"
+                       " AND is_human=1", (name,)):
+            raise ApiError(409, "that name is taken — open this page on the device"
+                                " where you claimed it, or pick another name")
         if self._row("SELECT id FROM players WHERE lower(name)=lower(?)", (name,)):
             raise ApiError(409, "that name is taken — pick another")
-        token = secrets.token_hex(16)
+        new_token = secrets.token_hex(16)
         pid = self._insert("INSERT INTO players (name, token, is_human, wallet, created_at)"
                            " VALUES (?,?,?,?,?)",
-                           (name, token, 1, wallet, now()))
-        return {"player_id": pid, "name": name, "token": token, "wallet": wallet,
+                           (name, new_token, 1, wallet, now()))
+        return {"player_id": pid, "name": name, "token": new_token, "wallet": wallet,
                 "note": "keep your token secret — it is your identity here"}
 
     def _house_bot(self):
@@ -4487,7 +4495,8 @@ class Handler(BaseHTTPRequestHandler):
         Wallet is optional: visitors claim a table name and challenge
         before connecting; the wallet binds at stake time. The token is
         the human's auth for every later call; keep it secret."""
-        return self.arena.human_session(body.get("wallet"), body.get("name"))
+        return self.arena.human_session(body.get("wallet"), body.get("name"),
+                                            body.get("token"))
 
     def h_human_challenge(self, body, qs):
         """Challenge an agent (or the house bot Zuckbot) to any game kind.

@@ -321,11 +321,15 @@ async function claimSeat(){
   if(name.length<2){showErr("Pick a name, at least 2 characters.");return;}
   var btn=$("btnName");btn.disabled=true;btn.innerHTML='<span class="spin"></span>claiming…';
   try{
-    var d=await api("/api/human/session",{wallet:S.wallet,name:name});
+    var d=await api("/api/human/session",{wallet:S.wallet,name:name,token:S.token});
     S.token=d.token;S.name=d.name;save();
     steps(1);show("stepGame");
     showOk("Seat claimed — welcome to the tables, "+d.name+".");
-  }catch(e){showErr(e.message);btn.disabled=false;btn.textContent="Claim my seat";}
+  }catch(e){
+    if(/session expired/.test(e.message||"")){S.token=null;save();
+      showErr("Session expired — claim your seat again.");}
+    else showErr(e.message);
+    btn.disabled=false;btn.textContent="Claim my seat";}
 }
 
 /* ---------- game picker ---------- */
