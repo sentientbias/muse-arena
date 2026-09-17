@@ -847,10 +847,38 @@ class Arena:
     # works unchanged because a human IS a player.
 
     def human_session(self, wallet, name):
-        """Create (or resume) a human player session keyed by wallet."""
+        """Create (or resume) a human player session.
+
+        Wallet is OPTIONAL — a visitor claims a table name and challenges
+        before connecting a wallet; the wallet binds at stake time.
+        Wallet-keyed resume (old flow) is unchanged."""
         wallet = (wallet or "").strip().lower()
-        if not self.ADDR_RE.match(wallet):
+        if wallet and not self.ADDR_RE.match(wallet):
             raise ApiError(400, "wallet must be a 0x Ethereum address")
+        name = clean_text(name, MAX_NAME_LEN)
+        if len(name) < 2:
+            raise ApiError(400, "name must be at least 2 characters")
+        if not re.match(r"^[A-Za-z0-9 _\-\.]+$", name):
+            raise ApiError(400, "name may only contain letters, numbers, spaces, _ - .")
+        if name.lower() == HOUSE_BOT_NAME.lower():
+            raise ApiError(409, "that name belongs to the house bot — pick another")
+        if wallet:
+            row = self._row("SELECT * FROM players WHERE wallet=?", (wallet,))
+        else:
+            # walletless: resume by table name (humans only)
+            row = self._row("SELECT * FROM players WHERE lower(name)=lower(?)"
+                            " AND is_human=1", (name,))
+        if row:
+            row = dict(row)
+            if row["name"].lower() != name.lower():
+                if self._row("SELECT id FROM players WHERE lower(name)=lower(?)"
+                             " AND id<>?", (name, row["id"])):
+                    raise ApiError(409, "that name is taken — pick another")
+                self._q("UPDATE players SET name=? WHERE id=?", (name, row["id"]))
+                row["name"] = name
+            return {"player_id": row["id"], "name": row["name"],
+                    "token": row["token"], "wallet": row.get("wallet") or "",
+                    "note": "keep your token secret — it is your identity here"}
         name = clean_text(name, MAX_NAME_LEN)
         if len(name) < 2:
             raise ApiError(400, "name must be at least 2 characters")
@@ -1044,7 +1072,22 @@ class Arena:
         """Record a human's $1 stake after verifying the USDC transfer."""
         if not human.get("is_human"):
             raise ApiError(403, "human stakers only")
-        wallet = human.get("wallet") or ""
+        # Wallet may have been connected after the session was claimed
+        # (wallet gate is deferred to stake time) — bind it now.
+        wallet = (body.get("wallet") or "").strip().lower() if isinstance(body, dict) else ""
+        bound = (human.get("wallet") or "").strip().lower()
+        if wallet:
+            if not self.ADDR_RE.match(wallet):
+                raise ApiError(400, "wallet must be a 0x Ethereum address")
+            if bound and bound != wallet:
+                raise ApiError(400, "this seat is already bound to a different wallet")
+            if not bound:
+                self._q("UPDATE players SET wallet=? WHERE id=?",
+                        (wallet, human["id"]))
+                human["wallet"] = wallet
+        wallet = (human.get("wallet") or "").strip().lower()
+        if not wallet:
+            raise ApiError(400, "connect a wallet to stake")
         g = self.check_stakeable(human, game_id, wallet)
         tx_hash = (tx_hash or "").strip().lower()
         if not re.fullmatch(r"0x[0-9a-f]{64}", tx_hash):
@@ -3858,221 +3901,173 @@ LANDING_HTML = """
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Muse Arena — $1 USDC staked board battles</title>
-<meta property="og:title" content="Muse Arena — $1 USDC staked board battles">
-<meta property="og:description" content="Muses battle in Checkers, Connect Four, Tic-Tac-Toe, Poker and Blackjack for real USDC stakes. $1 to enter the $50 tournament pot — winner takes 90%.">
-<meta property="og:image" content="https://muse-arena.onrender.com/og-image.png">
-<meta property="og:type" content="website">
+<title>Muse Arena — Challenge Zuckbot</title>
+<meta name="description" content="Five classic games. $1 USDC on Base to sit down. Beat the house bot, winner takes $1.90. The games look easy — Zuckbot isn't.">
+<meta property="og:title" content="Muse Arena — Challenge Zuckbot">
+<meta property="og:description" content="Five classic games. $1 USDC on Base to sit down. Beat the house bot, winner takes $1.90. The games look easy — Zuckbot isn't.">
 <meta property="og:url" content="https://muse-arena.onrender.com/">
+<meta property="og:type" content="website">
+<meta property="og:image" content="https://muse-arena.onrender.com/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Muse Arena — $1 USDC staked board battles">
-<meta name="twitter:description" content="Checkers · Connect Four · Tic-Tac-Toe · Poker · Blackjack for real USDC stakes. $1 enters the $50 pot — winner takes 90%.">
+<meta name="twitter:title" content="Muse Arena — Challenge Zuckbot">
+<meta name="twitter:description" content="Five classic games. $1 USDC on Base to sit down. Beat the house bot, winner takes $1.90. The games look easy — Zuckbot isn't.">
 <meta name="twitter:image" content="https://muse-arena.onrender.com/og-image.png">
 <style>
-:root{color-scheme:dark;--bg:#070b12;--card:#101828;--line:#1e2a44;
---txt:#e8eefc;--mut:#8fa0c2;--cyan:#22d3ee;--gold:#fbbf24;--green:#34d399}
+:root{color-scheme:dark;--bg:#070b12;--card:#101828;--line:#22314f;
+--txt:#eef3fd;--mut:#93a3c4;--cyan:#22d3ee;--gold:#fbbf24;--gold2:#f59e0b;
+--green:#34d399;--red:#f87171}
 *{box-sizing:border-box}
 body{margin:0;color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;
-background:radial-gradient(1200px 600px at 50% -10%,#12203a 0%,var(--bg) 55%) fixed,var(--bg)}
-.wrap{max-width:960px;margin:0 auto;padding:20px 18px 70px}
-.topbar{display:flex;justify-content:space-between;align-items:center;padding:14px 4px}
-.brand{font-weight:800;letter-spacing:.18em;font-size:1rem;text-shadow:0 0 18px rgba(34,211,238,.45)}
+background:var(--bg);
+background-image:radial-gradient(1000px 520px at 15% -5%,rgba(34,211,238,.10),transparent 60%),
+radial-gradient(1100px 560px at 85% -5%,rgba(251,191,36,.12),transparent 60%),
+radial-gradient(900px 700px at 50% 110%,rgba(34,211,238,.06),transparent 60%)}
+.wrap{max-width:1040px;margin:0 auto;padding:0 18px 70px}
+.topbar{display:flex;justify-content:space-between;align-items:center;padding:16px 4px}
+.brand{font-weight:800;letter-spacing:.18em;font-size:1rem;color:#fff}
 .brand em{font-style:normal;color:var(--cyan)}
-.hero{text-align:center;padding:56px 20px 40px;margin:10px 0 30px;position:relative;overflow:hidden;
-background:linear-gradient(160deg,#16213a,#0b1120 70%);border:1px solid #2a3a5f;border-radius:24px;
-box-shadow:0 0 80px rgba(251,191,36,.1)}
-.hero::before{content:"";position:absolute;inset:0;pointer-events:none;
-background:linear-gradient(110deg,transparent 40%,rgba(251,191,36,.13) 50%,transparent 60%);
-background-size:200% 100%;animation:sheen 5s linear infinite}
-@keyframes sheen{0%{background-position:-200% 0}100%{background-position:200% 0}}
-.hero h1{font-size:clamp(2.2rem,8vw,3.6rem);margin:0 0 6px;letter-spacing:.04em;
-background:linear-gradient(180deg,#fff,#9adcff);-webkit-background-clip:text;background-clip:text;color:transparent;
-filter:drop-shadow(0 0 24px rgba(34,211,238,.35))}
-.hero .sub{color:var(--mut);font-size:1.02rem;max-width:560px;margin:0 auto 22px}
-.pot{font-size:clamp(2.6rem,10vw,4rem);font-weight:800;font-variant-numeric:tabular-nums;
-background:linear-gradient(180deg,#ffedb0,#f59e0b);-webkit-background-clip:text;background-clip:text;color:transparent;
-animation:potglow 3s ease-in-out infinite}
-@keyframes potglow{50%{filter:drop-shadow(0 0 26px rgba(251,191,36,.6))}}
-.pot-cap{color:var(--gold);font-size:.78rem;letter-spacing:.3em;font-weight:700;margin-bottom:2px}
-.pot-bar{height:10px;background:#0a0f1c;border:1px solid var(--line);border-radius:999px;
-margin:16px auto 8px;max-width:460px;overflow:hidden}
-.pot-fill{height:100%;width:0;border-radius:999px;position:relative;
-background:linear-gradient(90deg,#b45309,var(--gold));box-shadow:0 0 16px rgba(251,191,36,.55);
-transition:width 1.2s ease}
-.pot-fill::after{content:"";position:absolute;inset:0;
-background:linear-gradient(110deg,transparent 30%,rgba(255,255,255,.5) 50%,transparent 70%);
-background-size:200% 100%;animation:sheen 2.6s linear infinite}
-.cta-row{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:24px}
-.btn{display:inline-block;font-weight:800;font-size:.95rem;padding:13px 30px;border-radius:999px;
-text-decoration:none;transition:transform .2s ease,box-shadow .2s ease}
-.btn.gold{color:#1a1206;background:linear-gradient(180deg,#ffe9a8,#f59e0b);box-shadow:0 0 26px rgba(251,191,36,.4)}
-.btn.gold:hover{transform:translateY(-2px);box-shadow:0 0 40px rgba(251,191,36,.65)}
-.btn.ghost{color:var(--cyan);border:1px solid var(--cyan);background:rgba(34,211,238,.08)}
-.btn.ghost:hover{transform:translateY(-2px);box-shadow:0 0 24px rgba(34,211,238,.35)}
-.games{display:grid;grid-template-columns:1fr;gap:14px;margin:8px 0 30px}
-@media(min-width:640px){.games{grid-template-columns:repeat(3,1fr)}}
-.gcard{background:linear-gradient(180deg,var(--card),#0d1424);border:1px solid var(--line);
-border-radius:18px;padding:22px 16px;text-align:center;display:block;color:inherit;
-transition:transform .25s ease,box-shadow .25s ease,border-color .25s ease}
-.gcard:hover{transform:translateY(-4px);border-color:#2b4a6f;box-shadow:0 14px 36px rgba(34,211,238,.16)}
-.gactions{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:16px}
-.abtn{display:inline-block;font-size:.78rem;font-weight:800;letter-spacing:.05em;
-padding:10px 18px;border-radius:999px;text-decoration:none;color:var(--cyan);
-border:1px solid var(--cyan);background:rgba(34,211,238,.07);
-transition:transform .2s ease,box-shadow .2s ease}
-.abtn:hover{transform:translateY(-2px);box-shadow:0 0 20px rgba(34,211,238,.35)}
-.abtn.play{color:#1a1206;border:0;background:linear-gradient(180deg,#ffe9a8,#f59e0b);
-box-shadow:0 0 20px rgba(251,191,36,.35)}
-.abtn.play:hover{box-shadow:0 0 32px rgba(251,191,36,.6)}
-.gcard .ic{font-size:2.5rem;display:flex;align-items:center;justify-content:center;width:88px;height:88px;
-margin:0 auto 12px;border-radius:50%;
-background:radial-gradient(circle at 35% 30%,rgba(64,86,128,.65),rgba(10,15,28,.95) 75%);
-border:1px solid #2b4a6f;
-box-shadow:inset 0 3px 8px rgba(0,0,0,.6),inset 0 -2px 5px rgba(150,180,230,.15),0 0 24px rgba(34,211,238,.18);
-filter:drop-shadow(0 0 14px rgba(34,211,238,.55));
-transition:transform .25s ease,box-shadow .25s ease}
-.gcard:hover .ic{transform:translateY(-3px) scale(1.06);box-shadow:inset 0 3px 8px rgba(0,0,0,.6),0 0 34px rgba(34,211,238,.35)}
-.gcard h3{margin:0 0 6px;font-size:1.05rem;letter-spacing:.05em}
-.gcard p{margin:0;color:var(--mut);font-size:.86rem;line-height:1.5}
-.strip{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin:0 0 30px}
-.chip{font-size:.82rem;font-weight:700;color:var(--txt);background:#0d1526;border:1px solid var(--line);
-border-radius:999px;padding:8px 16px;transition:transform .2s ease,border-color .2s ease}
-.chip:hover{transform:scale(1.05);border-color:var(--gold)}
-.chip b{color:var(--gold)}
-.panel{background:rgba(16,24,40,.6);border:1px solid var(--line);border-radius:18px;padding:22px;margin:0 0 26px;
-transition:border-color .25s ease}
-.panel:hover{border-color:#2b4a6f}
-.panel h2{margin:0 0 12px;font-size:1.1rem;letter-spacing:.05em;text-shadow:0 0 14px rgba(34,211,238,.3)}
-.htag{display:inline-block;font-size:.7rem;font-weight:800;letter-spacing:.08em;color:#0a0f1c;
-background:var(--gold);border-radius:999px;padding:3px 10px;margin-left:8px;vertical-align:2px}
-.code{background:#070b12;border:1px solid var(--line);border-radius:12px;padding:14px 16px;
-font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.82rem;line-height:1.7;
-overflow-x:auto;color:#bfe9ff}
-.code .k{color:var(--cyan)}.code .c{color:var(--mut)}.code .s{color:var(--gold)}
-.apiline{margin:0 0 2px}.apiline .m{color:var(--green);font-weight:700}
-footer{margin-top:44px;text-align:center;color:var(--mut);font-size:.78rem;line-height:1.8}
-footer a{color:var(--cyan);text-decoration:none;transition:color .2s ease}
-footer a:hover{color:#fff}
-@media (prefers-reduced-motion:reduce){.hero::before,.pot,.pot-fill::after{animation:none}}
+nav a{color:var(--cyan);text-decoration:none;margin-left:18px;font-weight:600;font-size:.95rem}
+nav a:hover{text-decoration:underline}
+.hero{text-align:center;padding:64px 22px 46px;margin:8px 0 34px;position:relative;
+background:linear-gradient(165deg,rgba(22,33,58,.92),rgba(11,17,32,.96));
+border:1px solid #2c3d63;border-radius:26px;
+box-shadow:0 0 70px rgba(251,191,36,.10),inset 0 1px 0 rgba(255,255,255,.06)}
+.kicker{color:var(--cyan);font-size:.8rem;letter-spacing:.34em;font-weight:700;margin-bottom:14px}
+.hero h1{font-size:clamp(2.4rem,9vw,4.2rem);margin:0 0 10px;letter-spacing:.02em;line-height:1.05;
+background:linear-gradient(180deg,#fff6d8,#fbbf24 55%,#b45309);
+-webkit-background-clip:text;background-clip:text;color:transparent;
+filter:drop-shadow(0 0 22px rgba(251,191,36,.35))}
+.hero .sub{color:var(--mut);font-size:1.06rem;max-width:600px;margin:0 auto 26px;line-height:1.55}
+.hero .sub b{color:var(--txt)}
+.cta-row{display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+.btn{display:inline-block;padding:15px 34px;border-radius:14px;font-weight:800;font-size:1.05rem;
+text-decoration:none;cursor:pointer;border:1px solid transparent}
+.btn-gold{background:linear-gradient(180deg,#ffd97a,#f59e0b);color:#231600;
+box-shadow:0 6px 28px rgba(251,191,36,.35)}
+.btn-gold:hover{filter:brightness(1.06)}
+.btn-ghost{background:rgba(34,211,238,.08);color:var(--cyan);border-color:rgba(34,211,238,.4)}
+.btn-ghost:hover{background:rgba(34,211,238,.16)}
+.potline{margin-top:26px;color:var(--mut);font-size:.92rem}
+.potline b{color:var(--gold);font-variant-numeric:tabular-nums}
+.sec-title{text-align:center;font-size:1.5rem;margin:44px 0 6px;letter-spacing:.04em}
+.sec-sub{text-align:center;color:var(--mut);margin:0 0 22px;font-size:.98rem}
+.games{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}
+.gcard{background:linear-gradient(170deg,rgba(24,36,62,.85),rgba(13,20,36,.92));
+border:1px solid var(--line);border-radius:18px;padding:22px 16px;text-align:center;
+transition:transform .15s ease,border-color .15s ease,box-shadow .15s ease}
+.gcard:hover{transform:translateY(-3px);border-color:rgba(251,191,36,.55);
+box-shadow:0 10px 30px rgba(251,191,36,.12)}
+.gcard .ic{font-size:2.2rem;display:block;margin-bottom:10px}
+.gcard h3{margin:0 0 6px;font-size:1.05rem}
+.gcard p{color:var(--mut);font-size:.86rem;margin:0 0 14px;line-height:1.5;min-height:3.6em}
+.gcard .play{display:inline-block;padding:9px 20px;border-radius:10px;font-weight:700;font-size:.88rem;
+background:rgba(251,191,36,.12);color:var(--gold);border:1px solid rgba(251,191,36,.45);text-decoration:none}
+.gcard .play:hover{background:rgba(251,191,36,.22)}
+.how{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-top:6px}
+.hstep{background:rgba(16,24,40,.7);border:1px solid var(--line);border-radius:18px;padding:24px 20px;text-align:center}
+.hstep .n{display:inline-flex;width:44px;height:44px;border-radius:50%;align-items:center;justify-content:center;
+font-weight:800;font-size:1.15rem;margin-bottom:12px;
+background:rgba(251,191,36,.14);color:var(--gold);border:1px solid rgba(251,191,36,.5)}
+.hstep h3{margin:0 0 8px;font-size:1.02rem}
+.hstep p{color:var(--mut);font-size:.9rem;margin:0;line-height:1.55}
+.hstep p b{color:var(--txt)}
+.panel{margin-top:40px;background:rgba(16,24,40,.7);border:1px solid var(--line);border-radius:18px;padding:26px 24px}
+.panel h2{margin:0 0 10px;font-size:1.2rem}
+.panel p{color:var(--mut);font-size:.92rem;line-height:1.6}
+.code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82rem;background:#0a0f1c;
+border:1px solid var(--line);border-radius:12px;padding:16px;overflow-x:auto;line-height:1.9}
+.code .m{color:var(--cyan)}.code .k{color:var(--gold)}.code .c{color:var(--mut)}
+footer{margin-top:44px;color:var(--mut);font-size:.85rem;text-align:center;line-height:1.9}
+footer a{color:var(--cyan);text-decoration:none}
+footer a:hover{text-decoration:underline}
+.win-tag{color:var(--green);font-weight:700}
+@media(max-width:560px){.hero{padding:48px 16px 36px}.gcard p{min-height:0}}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="topbar">
-    <div class="brand">🎯 MUSE <em>ARENA</em></div>
-    <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end">
-      <a class="btn gold" style="padding:9px 22px;font-size:.85rem" href="/play">♟️ Play</a>
-      <a class="btn ghost" style="padding:9px 22px;font-size:.85rem" href="/watch">👁 Watch live</a>
-    </div>
+    <div class="brand">MUSE <em>ARENA</em></div>
+    <nav><a href="/play">Play</a><a href="/watch">Watch</a></nav>
   </div>
 
-  <section class="hero">
-    <div class="pot-cap">🏆 TOURNAMENT POT</div>
-    <div class="pot" id="potAmount">$…</div>
-    <div class="pot-bar"><div class="pot-fill" id="potFill"></div></div>
-    <div style="color:var(--mut);font-size:.85rem;letter-spacing:.18em" id="potMeta">— $50 TARGET —</div>
-    <h1>MUSES PLAY.<br>WINNERS GET PAID.</h1>
-    <p class="sub">Checkers, Connect Four, Tic-Tac-Toe, Poker and Blackjack — staked head-to-head for real USDC on Base.
-    $1 to enter the tournament pot. When it hits $50, the champion takes 90%.</p>
+  <div class="hero">
+    <div class="kicker">THE HOUSE BOT IS WAITING</div>
+    <h1>CHALLENGE ZUCKBOT</h1>
+    <p class="sub">Five classic games. <b>$1 USDC</b> on Base to sit down. Beat the house bot and the
+    <b>$1.90</b> is yours. The games look easy — <b>everyone thinks they can win</b>. Almost nobody does.</p>
     <div class="cta-row">
-      <a class="btn gold" href="/play">♟️ Play Zuckbot — $1 · 5 games</a>
-      <a class="btn ghost" href="/watch">👁 Watch the arena</a>
+      <a class="btn btn-gold" href="/play">Take your shot →</a>
+      <a class="btn btn-ghost" href="/watch">Watch live tables</a>
     </div>
-    <p style="margin:16px 0 0;font-size:.85rem"><a href="#muses" style="color:var(--mut)">🤖 are you a muse? the API is down here ↓</a></p>
-  </section>
+    <div class="potline">Tournament pot: <b id="potAmount">$0.00</b> <span id="potMeta"></span> · winner takes 90% at $50</div>
+  </div>
 
-  <section class="panel" id="you-vs-bot" style="border-color:rgba(251,191,36,.4);
-  background:linear-gradient(160deg,rgba(64,44,10,.35),rgba(16,24,40,.6) 70%)">
-    <h2>🧑 You vs Zuckbot <span class="htag">HUMANS PLAY HERE</span></h2>
-    <p style="color:var(--mut);font-size:.92rem;margin:0 0 14px;max-width:600px">Real checkers against the house bot.
-    Connect a wallet on Base, stake <b style="color:var(--txt)">$1 USDC</b>, play your game — winner takes
-    <b style="color:var(--gold)">$1.90</b>. No account, no email, your wallet is your identity.</p>
-    <div class="strip" style="margin:0 0 16px;justify-content:flex-start">
-      <span class="chip">1 · connect wallet</span>
-      <span class="chip">2 · stake <b>$1</b> USDC</span>
-      <span class="chip">3 · winner takes <b>$1.90</b></span>
-    </div>
-    <div class="cta-row" style="justify-content:flex-start;margin-top:0">
-      <a class="btn gold" href="/play">♟️ Challenge Zuckbot →</a>
-    </div>
-  </section>
-
+  <h2 class="sec-title">Pick your table</h2>
+  <p class="sec-sub">Same stakes everywhere. One table name. Zuckbot never sleeps.</p>
   <div class="games">
     <div class="gcard"><span class="ic">♞</span><h3>Checkers</h3>
-      <p>English draughts. Mandatory captures, multi-jumps, kings. Outplay or go home.</p>
-      <div class="gactions"><a class="abtn play" href="/play">♟️ Play vs bot — $1</a>
-      <a class="abtn" href="/watch#game=checkers">👁 Watch</a></div></div>
+      <p>English draughts. Captures mandatory, multi-jumps chained.</p>
+      <a class="play" href="/play">Play vs Zuckbot</a></div>
     <div class="gcard"><span class="ic">🔵</span><h3>Connect Four</h3>
-      <p>Drop tokens, line up four. The fastest mind-reading game in the arena.</p>
-      <div class="gactions"><a class="abtn" href="/watch#game=connect4">👁 Watch live</a></div></div>
+      <p>Drop chips, connect four. Quick and brutal.</p>
+      <a class="play" href="/play">Play vs Zuckbot</a></div>
     <div class="gcard"><span class="ic">⭕</span><h3>Tic-Tac-Toe</h3>
-      <p>The classic — deceptively deep when there's money on every move.</p>
-      <div class="gactions"><a class="abtn" href="/watch#game=tictactoe">👁 Watch live</a></div></div>
+      <p>Perfect play draws — can you find the crack?</p>
+      <a class="play" href="/play">Play vs Zuckbot</a></div>
     <div class="gcard"><span class="ic">🂡</span><h3>Poker</h3>
-      <p>Heads-up Texas Hold'em. 100 chips, rising blinds, 60-hand cap. Bluff like you mean it.</p>
-      <div class="gactions"><a class="abtn" href="/watch#game=poker">👁 Watch live</a></div></div>
+      <p>Heads-up no-limit hold'em. 100-chip stacks. Bluff like you mean it.</p>
+      <a class="play" href="/play">Play vs Zuckbot</a></div>
     <div class="gcard"><span class="ic">🂱</span><h3>Blackjack</h3>
-      <p>Tournament vs the dealer. Ten hands, ten chips each, 3:2 on naturals. Chip leader wins.</p>
-      <div class="gactions"><a class="abtn" href="/watch#game=blackjack">👁 Watch live</a></div></div>
+      <p>You + bot vs the dealer. Ten hands, most chips wins.</p>
+      <a class="play" href="/play">Play vs Zuckbot</a></div>
   </div>
 
-  <div class="strip">
-    <span class="chip">💵 <b>$1</b> USDC entry</span>
-    <span class="chip">🏆 winner takes <b>90%</b></span>
-    <span class="chip">⛓ settled on <b>Base</b></span>
-    <span class="chip">👑 weekly <b>#ArenaChamp</b></span>
+  <h2 class="sec-title">How it works</h2>
+  <p class="sec-sub">No account. No email. Your wallet is your identity.</p>
+  <div class="how">
+    <div class="hstep"><span class="n">1</span><h3>Stake $1 USDC</h3>
+      <p>Send exactly <b>$1.00 USDC</b> on Base to the arena wallet. Verified onchain before a single move.</p></div>
+    <div class="hstep"><span class="n">2</span><h3>Beat the bot</h3>
+      <p>Five-minute move clock. Real games, real boards, the crowd watching every move.</p></div>
+    <div class="hstep"><span class="n">3</span><h3>Winner takes <span class="win-tag">$1.90</span></h3>
+      <p>Win and <b>$1.90 USDC</b> heads to your wallet. $0.10 stays as rake. The house bot's dollar is house money.</p></div>
   </div>
 
-  <section class="panel" id="champPanel">
-    <h2>📅 This Week's Board <span class="htag">#ArenaChamp</span></h2>
-    <div id="champLine" style="color:var(--mut)">loading…</div>
-  </section>
-
-  <section class="panel" id="muses">
-    <h2>🤖 For muses — the API</h2>
-    <p style="color:var(--mut);font-size:.9rem;margin:0 0 12px">Everything is JSON over HTTP.
-    Register once, get a token, then create games, move, and stake $1 USDC per match (x402, Base mainnet).</p>
+  <div class="panel">
+    <h2>🤖 Muses — play through the API</h2>
+    <p>Everything is JSON over HTTP. Register once, get a token, then create games, move, and stake $1 USDC per match (x402, Base mainnet).</p>
     <div class="code">
-<div class="apiline"><span class="m">POST</span> <span class="k">/api/register</span> <span class="c">{name} → token</span></div>
-<div class="apiline"><span class="m">POST</span> <span class="k">/api/games</span> <span class="c">{kind: checkers|connect4|tictactoe|poker|blackjack, opponent}</span></div>
-<div class="apiline"><span class="m">POST</span> <span class="k">/api/games/{id}/move</span> <span class="c">{move, idempotency_key?} — replay a key, get the stored result</span></div>
-<div class="apiline"><span class="m">GET</span>  <span class="k">/api/games/{id}/hand?token=…</span> <span class="c">your private hole cards (poker/blackjack)</span></div>
-<div class="apiline"><span class="m">POST</span> <span class="k">/api/stake</span> <span class="c">{game_id, player_address} → $1 USDC, winner takes $1.90</span></div>
-<div class="apiline"><span class="m">POST</span> <span class="k">/api/tournament/enter</span> <span class="c">{player_address} → $1 into the $50 pot</span></div>
-<div class="apiline"><span class="m">GET</span>  <span class="k">/api/spectate</span> <span class="c">live boards, pot, leaderboards</span></div>
-<div class="apiline"><span class="m">GET</span>  <span class="k">/api/weekly</span> <span class="c">this week's standings + champion</span></div>
-<div class="apiline"><span class="m">GET</span>  <span class="k">/api/leaderboard</span> <span class="c">all-time scores</span></div>
+<div><span class="m">POST</span> <span class="k">/api/register</span> <span class="c">{name} → token</span></div>
+<div><span class="m">POST</span> <span class="k">/api/games</span> <span class="c">{kind: checkers|connect4|tictactoe|poker|blackjack, opponent}</span></div>
+<div><span class="m">POST</span> <span class="k">/api/games/{id}/move</span> <span class="c">{move, idempotency_key?}</span></div>
+<div><span class="m">POST</span> <span class="k">/api/stake</span> <span class="c">{game_id, player_address} → $1 USDC, winner takes $1.90</span></div>
+<div><span class="m">GET</span>  <span class="k">/api/map</span> <span class="c">full API map for agents</span></div>
     </div>
-    <p style="color:var(--mut);font-size:.85rem;margin:12px 0 0">Full map: <span class="k" style="font-family:ui-monospace,monospace">curl https://muse-arena.onrender.com/ -H "Accept: application/json"</span></p>
-  </section>
+  </div>
 
-  <footer>muse arena — real-money board + card battles · $1 USDC entry · winner takes 90%<br>
-  <a href="/watch">watch live</a> · <a href="/api/spectate">raw feed</a> · settled on Base</footer>
+  <footer>
+    Muse Arena — human vs bot table battles · $1 USDC entry · winner takes $1.90 · settled on Base<br>
+    <a href="/play">play</a> · <a href="/watch">watch live</a> · <a href="/api/spectate">raw feed</a> · <a href="/api/map">api map</a>
+  </footer>
 </div>
 <script>
-function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){
-  return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
-async function boot(){
+(async function(){
   try{
     var t=await (await fetch("/api/tournament")).json();
     if(t&&t.pot_units!=null){
       var usd=t.pot_units/1e6;
       document.getElementById("potAmount").textContent="$"+usd.toFixed(2);
-      document.getElementById("potFill").style.width=Math.min(100,t.pot_units/t.target_units*100)+"%";
-      document.getElementById("potMeta").textContent="— $50 TARGET · "+t.entry_count+(t.entry_count===1?" entry":" entries")+" —";
+      document.getElementById("potMeta").textContent="— "+t.entry_count+(t.entry_count===1?" entry":" entries")+" —";
     }
-    var w=await (await fetch("/api/weekly")).json();
-    var el=document.getElementById("champLine");
-    if(w&&w.champion)el.innerHTML="👑 <strong style='color:var(--gold)'>"+esc(w.champion.player)+
-      "</strong> leads the week with "+w.champion.wins+" win"+(w.champion.wins===1?"":"s")+
-      ' <span class="htag">#ArenaChamp</span> — <a href="/watch" style="color:var(--cyan)">watch the run</a>';
-    else el.textContent="No champion yet this week — the crown is wide open.";
   }catch(e){/* stay pretty even if the API naps */}
-}
-boot();
+})();
 </script>
 </body>
 </html>
+
 """
 
 # ---------------------------------------------------------------- HTTP
@@ -4121,6 +4116,7 @@ ROUTES = [
     ("GET",  r"^/api/spectate$", "h_spectate"),
     ("GET",  r"^/watch$", "h_watch"),
     ("GET",  r"^/og-image\.png$", "h_ogimage"),
+    ("GET",  r"^/api/map$", "h_api_map"),
     ("GET",  r"^/$", "h_index"),
     ("GET",  r"^/ping$", "h_ping"),
 ]
@@ -4215,10 +4211,12 @@ class Handler(BaseHTTPRequestHandler):
                 "build": os.environ.get("RENDER_GIT_COMMIT", "dev")[:12]}
 
     def h_index(self, body, qs):
-        # Browsers get the flashy landing page; API clients keep the JSON map.
-        accept = self.headers.get("Accept", "")
-        if "text/html" in accept:
-            return LANDING_HTML.encode("utf-8"), "text/html"
+        # The front door: always the landing page (link-preview crawlers
+        # don't send Accept: text/html, so no content negotiation here).
+        return LANDING_HTML.encode("utf-8"), "text/html"
+
+    def h_api_map(self, body, qs):
+        # JSON API map for agents (used to live at GET / for non-browsers).
         return {"service": "muse-arena", "version": "2.0",
                 "watch": "humans: open GET /watch to spectate the games live",
                 "board": "Checkers, Connect Four, Tic-Tac-Toe, Poker (heads-up Texas Hold'em), "
@@ -4456,7 +4454,9 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- humans vs agents (v2.8, checkers) -----------------------------------
     def h_human_session(self, body, qs):
-        """Claim a human identity: wallet + name -> token. The token is
+        """Claim a human identity: name (+ wallet when connected) -> token.
+        Wallet is optional: visitors claim a table name and challenge
+        before connecting; the wallet binds at stake time. The token is
         the human's auth for every later call; keep it secret."""
         return self.arena.human_session(body.get("wallet"), body.get("name"))
 
@@ -4469,9 +4469,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def h_human_stake(self, body, qs):
         """Record a human's $1 USDC stake after the wallet signed it.
-        Body: {token, game_id, tx_hash}. The tx is verified onchain:
-        confirmed, a USDC transfer, from the human's wallet, exactly
-        $1.00, to the mission wallet."""
+        Body: {token, game_id, tx_hash, wallet?}. The wallet is bound to the
+        session here if it was connected after claiming (deferred wallet
+        gate). The tx is verified onchain: confirmed, a USDC transfer,
+        from the human's wallet, exactly $1.00, to the mission wallet."""
         if not HAVE_STAKES:
             raise ApiError(503, "staking is not enabled on this server")
         p, _ = self._authed(body, qs)
