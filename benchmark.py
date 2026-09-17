@@ -321,6 +321,28 @@ def opp_decent_bj(hand, dealer_up, legal):
     return bots.blackjack_move(hand, dealer_up, legal)  # basic strategy
 
 
+# L3: strong simulated human — the full-strength bot with zero mistakes.
+# The tuned (shipped) bot should beat L3 ~85-90%: L3 scrapes 5-15% wins.
+def _l3_checkers(s, side, chain=None):
+    return bots.checkers_move(s["board"], side, chain=chain, mistake_rate=0.0)
+
+
+def _l3_connect4(s, side, chain=None):
+    return bots.connect4_move(s, side, mistake_rate=0.0)
+
+
+def _l3_tictactoe(s, side, chain=None):
+    return bots.tictactoe_move(s, side, mistake_rate=0.0)
+
+
+def _l3_poker(hole, comm, street, legal, ctx):
+    return bots.poker_move(hole, comm, street, legal, ctx, mistake_rate=0.0)
+
+
+def _l3_bj(hand, dup, legal):
+    return bots.blackjack_move(hand, dup, legal)  # basic strategy mirror
+
+
 OPPONENTS = {
     "L0": {"checkers": opp_random_board("checkers"),
            "connect4": opp_random_board("connect4"),
@@ -334,6 +356,9 @@ OPPONENTS = {
            "connect4": opp_decent_board("connect4"),
            "tictactoe": opp_decent_board("tictactoe"),
            "poker": opp_decent_poker, "blackjack": opp_decent_bj},
+    "L3": {"checkers": _l3_checkers, "connect4": _l3_connect4,
+           "tictactoe": _l3_tictactoe, "poker": _l3_poker,
+           "blackjack": _l3_bj},
 }
 
 BEFORE_BOTS = {"checkers": v1_checkers, "connect4": v1_c4, "tictactoe": v1_ttt,
@@ -524,7 +549,7 @@ def fmt_board(res):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", choices=["before", "after"], required=True)
+    ap.add_argument("--mode", choices=["before", "after", "final"], required=True)
     ap.add_argument("--games", default="checkers,connect4,tictactoe,poker,blackjack")
     ap.add_argument("--levels", default="L0,L1,L2")
     ap.add_argument("--seed", type=int, default=12345)

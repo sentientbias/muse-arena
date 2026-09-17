@@ -9,7 +9,15 @@ returns a move dict in exactly the shape `Arena.make_move` expects.
 Response budget: every bot is designed to answer well under a second —
 iterative deepening with a hard wall-clock deadline for the search games,
 table lookup / bounded Monte Carlo for the card games.
+
+Design note (2026-09-17, Anthony): the bots are VERY HARD but JUST BARELY
+BEATABLE — a skilled human should feel "I almost had it" and win a small
+fraction of games (~5-15%). Everyone thinks they can win; almost nobody
+does. Each search/card bot therefore takes a `mistake_rate`: on that
+fraction of moves it plays a slight, human-like inaccuracy (a plausible
+second-best move, a missed value bet) instead of the optimal move.
 """
+
 import itertools
 import math
 import random
@@ -25,6 +33,22 @@ from app import (bj_total, c4_apply, c4_legal, chk_apply, chk_legal_moves,
 
 class _Timeout(Exception):
     pass
+
+
+# Barely-beatable tuning (2026-09-17, Anthony): very hard, but a skilled
+# human wins a small fraction (~5-15%) and feels "I almost had it".
+# mistake_rate = fraction of moves where the bot plays a slight, human-like
+# inaccuracy instead of the optimal move. 0.0 = full strength.
+MISTAKE_RATE = 0.10
+POKER_MISTAKE_RATE = 0.06
+
+
+def _slight_inaccuracy(ranked, k=4):
+    """Pick a plausible-but-inferior move from a best-first ranked
+    [(value, move)] list: weighted toward 2nd-best. Never a random blunder."""
+    cands = ranked[1:k]
+    weights = [3, 2, 1][:len(cands)]
+    return random.choices([m for _, m in cands], weights=weights)[0]
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +141,31 @@ def _chk_negamax2(board, side, depth, alpha, beta, deadline, chain=None):
     return best, bestm
 
 
-def checkers_move(board, side, chain=None, time_budget=0.8, max_depth=6):
+def _chk_root_rank(board, side, chain=None, depth=3):
+    """Score every legal root move with a fixed-depth search; returns
+    [(value, move)] best-first from `side`'s perspective."""
+    moves = chk_legal_moves(board, side, chain)
+    deadline = time.time() + 10.0
+    scored = []
+    for m in moves:
+        nb, _cap, _prom, chain2 = chk_apply(board, side, m)
+        try:
+            if chain2:
+                v, _ = _chk_negamax2(nb, side, depth - 1, -10 ** 9, 10 ** 9,
+                                     deadline, chain=tuple(chain2))
+            else:
+                v, _ = _chk_negamax2(nb, 1 - side, depth - 1, -10 ** 9,
+                                     10 ** 9, deadline)
+                v = -v
+        except _Timeout:
+            v = _chk_eval2(nb, side)
+        scored.append((v, m))
+    scored.sort(key=lambda t: -t[0])
+    return scored
+
+
+def checkers_move(board, side, chain=None, time_budget=0.8, max_depth=6,
+                  mistake_rate=MISTAKE_RATE):
     """House-bot checkers move. Returns a legal move dict."""
     moves = chk_legal_moves(board, side, chain)
     if not moves:
@@ -136,6 +184,10 @@ def checkers_move(board, side, chain=None, time_budget=0.8, max_depth=6):
                 best = m
     except _Timeout:
         pass
+    if mistake_rate and len(moves) > 1 and random.random() < mistake_rate:
+        ranked = _chk_root_rank(board, side, chain)
+        if len(ranked) > 1:
+            return _slight_inaccuracy(ranked)
     return best
 
 
@@ -179,14 +231,26 @@ def _ttt_minimax(board, side, alpha, beta):
     return best, bestm
 
 
-def tictactoe_move(state, side):
-    """Perfect tic-tac-toe: never loses, punishes every mistake."""
+def tictactoe_move(state, side, mistake_rate=MISTAKE_RATE):
+    """Near-perfect tic-tac-toe. With probability `mistake_rate` the bot
+    "doesn't see it": it still takes an immediate win, but may miss a block
+    or walk into a fork — the classic human slip a strong player punishes."""
+    from app import ttt_winner
     board = list(state["board"])
     legal = [i for i, v in enumerate(board) if v == 0]
     if not legal:
         return None
     if len(legal) == 1:
         return {"cell": legal[0]}
+    # immediate win is always seen (even humans take those)
+    for i in legal:
+        board[i] = side + 1
+        if ttt_winner({"board": board}) == side:
+            board[i] = 0
+            return {"cell": i}
+        board[i] = 0
+    if mistake_rate and random.random() < mistake_rate:
+        return {"cell": random.choice(legal)}
     _score, cell = _ttt_minimax(board, side, -2, 2)
     return {"cell": cell if cell is not None else legal[0]}
 
@@ -309,7 +373,29 @@ def _c4_negamax(cols, side, depth, alpha, beta, deadline, tt):
     return best, bestm
 
 
-def connect4_move(state, side, time_budget=0.8, max_depth=8):
+def _c4_root_rank(cols, side, depth=4):
+    """Score every legal root column with a fixed-depth search; returns
+    [(value, column)] best-first from `side`'s perspective."""
+    deadline = time.time() + 10.0
+    scored = []
+    for c in _C4_ORDER:
+        if len(cols[c]) >= 6:
+            continue
+        cols[c].append(side + 1)
+        try:
+            v, _ = _c4_negamax(cols, 1 - side, depth - 1, -10 ** 9, 10 ** 9,
+                               deadline, {})
+            v = -v
+        except _Timeout:
+            v = _c4_eval(cols, side)
+        cols[c].pop()
+        scored.append((v, c))
+    scored.sort(key=lambda t: -t[0])
+    return scored
+
+
+def connect4_move(state, side, time_budget=0.8, max_depth=8,
+                  mistake_rate=MISTAKE_RATE):
     """House-bot connect-four move. Returns {"column": c}."""
     cols = [list(c) for c in state["cols"]]
     moves = [c for c in range(7) if len(cols[c]) < 6]
@@ -331,6 +417,10 @@ def connect4_move(state, side, time_budget=0.8, max_depth=8):
         cols[c].pop()
         if won:
             return {"column": c}
+    if mistake_rate and len(moves) > 1 and random.random() < mistake_rate:
+        ranked = _c4_root_rank(cols, side)
+        if len(ranked) > 1:
+            return {"column": _slight_inaccuracy(ranked)}
     best = {"column": 3 if 3 in moves else moves[0]}
     deadline = time.time() + time_budget
     tt = {}
@@ -396,13 +486,18 @@ def _poker_equity(hole, community, samples=350):
     return (wins + 0.5 * ties) / samples
 
 
-def poker_move(hole, community, street, legal, ctx):
+def poker_move(hole, community, street, legal, ctx,
+               mistake_rate=POKER_MISTAKE_RATE):
     """Heads-up poker decision.
 
     hole: [c1, c2]; community: [...]; street: preflop/flop/turn/river.
     legal: list of move dicts from the engine (with min/max amounts).
     ctx: dict(pot, to_call, stack, my_bet, is_button, bb).
     Returns a move dict for Arena.make_move.
+
+    With probability `mistake_rate` the bot makes a small human-like slip:
+    a missed value bet (checks instead), or a loose call when the pot odds
+    are close but not quite there.
     """
     pot = ctx["pot"]
     to_call = ctx["to_call"]
@@ -462,12 +557,26 @@ def poker_move(hole, community, street, legal, ctx):
     equity = _poker_equity(hole, community)
     if to_call <= 0:
         if equity >= 0.58:
-            return bet_size() or {"action": "check"}
-        return {"action": "check"}
-    pot_odds = to_call / (pot + to_call)
-    if equity >= 0.72 and "raise" in actions:
-        return raise_to()
-    return call_or_fold(equity, pot_odds + 0.07)
+            disciplined = bet_size() or {"action": "check"}
+        else:
+            disciplined = {"action": "check"}
+    else:
+        pot_odds = to_call / (pot + to_call)
+        if equity >= 0.72 and "raise" in actions:
+            disciplined = raise_to()
+        else:
+            disciplined = call_or_fold(equity, pot_odds + 0.07)
+
+    if mistake_rate and random.random() < mistake_rate:
+        a = (disciplined or {}).get("action")
+        if a in ("bet", "raise") and "check" in actions:
+            return {"action": "check"}  # missed value bet
+        if a == "fold" and to_call > 0 and "call" in actions:
+            # loose call when the odds were almost there
+            if equity >= pot_odds - 0.06:
+                m = actions["call"]
+                return {"action": "call", "amount": m["amount"]}
+    return disciplined
 
 
 # ---------------------------------------------------------------------------
