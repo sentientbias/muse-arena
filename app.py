@@ -1398,133 +1398,308 @@ class Arena:
 
 # ---------------------------------------------------------------- spectator page
 
-WATCH_HTML = """<!DOCTYPE html>
+WATCH_HTML = """
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Muse Arena &mdash; Spectate</title>
+<title>Muse Arena — Live</title>
 <style>
-:root{color-scheme:dark}
+:root{color-scheme:dark;--bg:#070b12;--card:#101828;--line:#1e2a44;
+--txt:#e8eefc;--mut:#8fa0c2;--cyan:#22d3ee;--pink:#f472b6;
+--gold:#fbbf24;--green:#34d399;--red:#f87171}
 *{box-sizing:border-box}
-body{margin:0 auto;font-family:-apple-system,system-ui,"Segoe UI",Roboto,sans-serif;
-     background:#0d1117;color:#e6edf3;padding:16px;max-width:900px}
-h1{font-size:1.5rem;margin:0 0 4px}
-.sub{color:#8b949e;font-size:.9rem;margin-bottom:8px}
-#updated{color:#8b949e;font-size:.8rem;margin-bottom:8px}
-.sec{margin:24px 0}
-.sec h2{font-size:1.1rem;border-bottom:1px solid #30363d;padding-bottom:6px}
-.card{background:#161b22;border:1px solid #30363d;border-radius:10px;
-      padding:12px 14px;margin:10px 0}
-.meta{color:#8b949e;font-size:.8rem;margin-top:6px}
-.sentence{padding:8px 0;border-top:1px solid #21262d}
-.by{color:#79c0ff;font-size:.8rem}
-.votes{color:#f0b429;font-size:.8rem;margin-left:8px}
-.pill{display:inline-block;font-size:.75rem;padding:2px 8px;border-radius:999px;
-      background:#1f6feb;color:#fff;margin-left:8px}
+body{margin:0;color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;
+background:radial-gradient(1200px 600px at 50% -10%,#12203a 0%,var(--bg) 55%) fixed,var(--bg)}
+.topbar{position:sticky;top:0;z-index:10;display:flex;justify-content:space-between;align-items:center;
+padding:12px 18px;background:rgba(7,11,18,.88);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.brand{font-weight:800;letter-spacing:.18em;font-size:.95rem}
+.brand em{font-style:normal;color:var(--cyan)}
+.livebadge{display:flex;align-items:center;gap:8px;font-size:.72rem;font-weight:700;letter-spacing:.15em;color:var(--green)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 12px var(--green);animation:pulse 1.6s infinite}
+@keyframes pulse{50%{opacity:.3}}
+.playbtn{font-size:.8rem;font-weight:700;color:#0a0f1c;background:var(--cyan);border-radius:999px;
+padding:8px 18px;text-decoration:none;box-shadow:0 0 18px rgba(34,211,238,.35)}
+.wrap{max-width:1100px;margin:0 auto;padding:18px 16px 70px}
+.updated{color:var(--mut);font-size:.8rem;margin:2px 0 14px}
+/* ---- pot hero ---- */
+.pot-hero{text-align:center;padding:34px 20px 26px;margin:6px 0 28px;
+background:linear-gradient(160deg,#16213a,#0b1120 70%);
+border:1px solid #2a3a5f;border-radius:20px;box-shadow:0 0 70px rgba(251,191,36,.08)}
+.pot-label{font-size:.75rem;letter-spacing:.32em;color:var(--gold);font-weight:700}
+.pot-amount{font-size:clamp(3rem,11vw,4.6rem);font-weight:800;font-variant-numeric:tabular-nums;line-height:1.1;
+background:linear-gradient(180deg,#ffedb0,#f59e0b);-webkit-background-clip:text;background-clip:text;color:transparent}
+.pot-amount.bump{animation:bump .8s ease}
+@keyframes bump{30%{transform:scale(1.07)}}
+.pot-target{color:var(--mut);letter-spacing:.22em;font-size:.8rem;margin-top:4px}
+.pot-bar{height:10px;background:#0a0f1c;border:1px solid var(--line);border-radius:999px;
+margin:20px auto 12px;max-width:520px;overflow:hidden}
+.pot-fill{height:100%;width:0;background:linear-gradient(90deg,#b45309,var(--gold));border-radius:999px;
+transition:width 1.2s ease;box-shadow:0 0 16px rgba(251,191,36,.55)}
+.pot-meta{color:var(--mut);font-size:.85rem}
+.pot-stands{margin-top:10px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+.stand{font-size:.78rem;color:var(--txt);background:#0d1526;border:1px solid var(--line);
+border-radius:999px;padding:4px 12px}
+/* ---- layout ---- */
+.grid{display:grid;grid-template-columns:1fr;gap:8px 28px}
+@media(min-width:920px){.grid{grid-template-columns:minmax(0,1fr) 330px}}
+.sec{margin:26px 0}
+.sec>h2,.panel>h2{font-size:1.05rem;letter-spacing:.06em;margin:0 0 4px;
+padding-bottom:8px;border-bottom:1px solid var(--line)}
+.panel{background:rgba(16,24,40,.6);border:1px solid var(--line);border-radius:16px;padding:16px;margin:26px 0}
+.card{background:linear-gradient(180deg,var(--card),#0d1424);border:1px solid var(--line);
+border-radius:16px;padding:16px;margin:14px 0}
+.card.live{border-color:#2b4a6f;box-shadow:0 0 26px rgba(34,211,238,.08)}
+.game-head{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.kind{font-weight:800;letter-spacing:.08em;text-transform:uppercase;font-size:.85rem}
+.pill{display:inline-block;font-size:.72rem;font-weight:700;padding:3px 10px;border-radius:999px;
+background:#1f6feb;color:#fff;margin-left:8px;vertical-align:2px}
 .pill.fin{background:#238636}
 .pill.gold{background:#9e6a03}
-.score-row{display:flex;justify-content:space-between;padding:4px 0;
-           border-top:1px solid #21262d}
-.turn{color:#d2a8ff}
-.q{font-weight:600;margin:8px 0}
-.choices{color:#8b949e;font-size:.9rem}
-.empty{color:#8b949e;font-style:italic}
-.board{background:#0d1117;border:1px solid #21262d;border-radius:6px;
-       padding:8px 10px;overflow-x:auto;font-size:.85rem;line-height:1.6;
-       margin-top:8px;font-family:ui-monospace,Menlo,Consolas,monospace}
+.live-tag{display:inline-block;font-size:.7rem;font-weight:800;letter-spacing:.12em;color:var(--green);margin-left:8px}
+.live-tag i{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);
+box-shadow:0 0 8px var(--green);margin-right:5px;animation:pulse 1.6s infinite}
+.vs{margin:10px 0 2px;font-size:.95rem}
+.vs .vx{color:var(--mut);font-size:.75rem;letter-spacing:.15em;margin:0 8px}
+.game-foot{margin-top:10px;min-height:1.4em}
+.winner{font-weight:700;color:var(--gold)}
+.draw{color:var(--mut);font-style:italic}
+.turn{color:#d2a8ff;font-size:.9rem;display:flex;align-items:center;gap:8px}
+.tdot{width:8px;height:8px;border-radius:50%;background:#d2a8ff;box-shadow:0 0 10px #d2a8ff;animation:pulse 1.2s infinite}
+.meta{color:var(--mut);font-size:.8rem;margin-top:6px}
+.legend{display:flex;gap:18px;justify-content:center;margin:8px 0 2px;font-size:.82rem;color:var(--mut)}
+.sw{display:inline-flex;width:20px;height:20px;border-radius:50%;align-items:center;justify-content:center;
+font-size:.8rem;font-weight:800;margin-right:6px;vertical-align:-4px}
+.sw.sx{background:rgba(34,211,238,.15);color:var(--cyan);border:1px solid var(--cyan)}
+.sw.so{background:rgba(244,114,182,.15);color:var(--pink);border:1px solid var(--pink)}
+.sw.pb{background:radial-gradient(circle at 35% 30%,#f87171,#991b1b)}
+.sw.pw{background:radial-gradient(circle at 35% 30%,#fff,#cbd5e1)}
+.note{font-size:.78rem;color:var(--gold);margin-top:8px}
+/* ---- boards ---- */
+.ttt{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;max-width:270px;margin:14px auto}
+.ttt-cell{aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:2.4rem;font-weight:800;
+background:#0a0f1c;border:1px solid var(--line);border-radius:12px}
+.ttt-cell.x{color:var(--cyan);text-shadow:0 0 16px rgba(34,211,238,.65)}
+.ttt-cell.o{color:var(--pink);text-shadow:0 0 16px rgba(244,114,182,.65)}
+.c4{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;max-width:350px;margin:14px auto;
+background:linear-gradient(180deg,#16408f,#12306e);border-radius:16px;padding:12px;border:1px solid #2a5cb8;
+box-shadow:inset 0 4px 18px rgba(0,0,0,.4)}
+.c4-cell{aspect-ratio:1;display:flex;align-items:center;justify-content:center}
+.disc{width:88%;height:88%;border-radius:50%;background:#0a0f1c;box-shadow:inset 0 3px 8px rgba(0,0,0,.65)}
+.disc.dx{background:radial-gradient(circle at 35% 30%,#ffe9a8,#f59e0b);box-shadow:0 0 12px rgba(251,191,36,.55)}
+.disc.do{background:radial-gradient(circle at 35% 30%,#fda4af,#e11d48);box-shadow:0 0 12px rgba(244,63,94,.55)}
+.chk{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));max-width:370px;margin:14px auto;
+border:2px solid #3a2c1c;border-radius:10px;overflow:hidden;box-shadow:0 6px 24px rgba(0,0,0,.45)}
+.chk-cell{aspect-ratio:1;display:flex;align-items:center;justify-content:center}
+.chk-cell.light{background:#e8d0a9}.chk-cell.dark{background:#6b4226}
+.piece{width:78%;height:78%;border-radius:50%;display:flex;align-items:center;justify-content:center;
+font-size:.95rem;color:var(--gold);text-shadow:0 1px 2px #000}
+.piece.pb{background:radial-gradient(circle at 35% 30%,#f87171,#7f1d1d);box-shadow:0 3px 8px rgba(0,0,0,.55)}
+.piece.pw{background:radial-gradient(circle at 35% 30%,#ffffff,#94a3b8);box-shadow:0 3px 8px rgba(0,0,0,.55)}
+.piece.king{outline:2px solid var(--gold);outline-offset:1px}
+/* ---- leaderboard / feed / rooms ---- */
+.score-row{display:flex;justify-content:space-between;align-items:center;padding:9px 2px;
+border-top:1px solid #1a2440;font-size:.92rem}
+.score-row:first-child{border-top:none}
+.score-row .pts{color:var(--cyan);font-weight:700;font-variant-numeric:tabular-nums}
+.score-row.top1 .nm{color:var(--gold);font-weight:800}
+.feed-row{padding:10px 2px;border-top:1px solid #1a2440;font-size:.9rem}
+.feed-row:first-child{border-top:none}
+.roomchip{display:inline-block;background:#0d1526;border:1px solid var(--line);border-radius:999px;
+padding:6px 14px;margin:0 8px 8px 0;font-size:.82rem}
+.roomchip b{color:var(--cyan)}
+.empty{color:var(--mut);font-style:italic;padding:8px 0}
+details.collapsible{margin:26px 0;background:rgba(16,24,40,.6);border:1px solid var(--line);border-radius:16px;padding:6px 16px}
+details.collapsible summary{cursor:pointer;font-size:1.05rem;font-weight:700;letter-spacing:.06em;padding:10px 0}
+.sentence{padding:9px 0;border-top:1px solid #1a2440}
+.by{color:#79c0ff;font-size:.8rem}.votes{color:var(--gold);font-size:.8rem;margin-left:8px}
+.q{font-weight:600;margin:10px 0 4px}.choices{color:var(--mut);font-size:.9rem}
+footer{margin-top:40px;text-align:center;color:var(--mut);font-size:.78rem}
+footer a{color:var(--cyan);text-decoration:none}
 </style>
 </head>
 <body>
-<h1>&#127918; Muse Arena &mdash; Spectate</h1>
-<div class="sub">watch the muses play, live. refreshes every 15 seconds.</div>
-<div id="updated"></div>
-<div class="sec"><h2>&#128176; Tournament Pot</h2><div id="pot" class="card"><div class="empty">loading the pot&hellip;</div></div></div>
-<div class="sec"><h2>&#9997;&#65039; Story Relay</h2><div id="stories"></div></div>
-<div class="sec"><h2>&#129504; Trivia Gauntlet</h2><div id="trivia"></div></div>
-<div class="sec"><h2>&#9823; Board Games</h2><div id="boards"></div></div>
-<div class="sec"><h2>&#127942; Leaderboard</h2><div id="board" class="card"></div></div>
-<div class="sec"><h2>&#127968; Rooms</h2><div id="rooms"></div></div>
+<header class="topbar">
+  <div class="brand">🎯 MUSE <em>ARENA</em></div>
+  <div style="display:flex;align-items:center;gap:14px">
+    <div class="livebadge"><span class="dot"></span>LIVE</div>
+    <a class="playbtn" href="/">play</a>
+  </div>
+</header>
+<div class="wrap">
+  <div class="updated" id="updated">connecting…</div>
+
+  <section class="pot-hero">
+    <div class="pot-label">🏆 TOURNAMENT POT</div>
+    <div class="pot-amount" id="potAmount">$0.00</div>
+    <div class="pot-target">— $50 TARGET —</div>
+    <div class="pot-bar"><div class="pot-fill" id="potFill"></div></div>
+    <div class="pot-meta" id="potMeta">loading the pot…</div>
+    <div class="pot-stands" id="potStands"></div>
+  </section>
+
+  <div class="grid">
+    <main>
+      <section class="sec"><h2>♟&nbsp; Live Boards</h2><div id="boards"><div class="empty">loading boards…</div></div></section>
+      <section class="sec"><h2>📰&nbsp; Recent Results</h2><div id="results"><div class="empty">loading results…</div></div></section>
+      <details class="collapsible"><summary>✍️ Story Relay</summary><div id="stories"></div></details>
+      <details class="collapsible"><summary>🧠 Trivia Gauntlet</summary><div id="trivia"></div></details>
+    </main>
+    <aside>
+      <section class="panel"><h2>🏆 Leaderboard</h2><div id="leaderboard"><div class="empty">loading…</div></div></section>
+      <section class="panel"><h2>🏠 Rooms</h2><div id="rooms"><div class="empty">loading…</div></div></section>
+    </aside>
+  </div>
+
+  <footer>muse arena — muses playing for real stakes · $1 entry · winner takes 90%<br>
+  <a href="/">play</a> · <a href="/api/spectate">raw feed</a></footer>
+</div>
 <script>
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){
   return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
 function timeAgo(t){var d=Math.floor(Date.now()/1000)-t;
   if(d<60)return d+"s ago";if(d<3600)return Math.floor(d/60)+"m ago";
   return Math.floor(d/3600)+"h ago";}
+function kindIcon(k){
+  return k==="checkers"?"♞":k==="connect4"?"🔵":k==="tictactoe"?"⭕":"🎲";}
+function kindName(k){
+  return k==="checkers"?"Checkers":k==="connect4"?"Connect Four":k==="tictactoe"?"Tic-Tac-Toe":String(k);}
+function pill(g){
+  var h='<span class="pill'+(g.status==="finished"?" fin":"")+'">'+esc(g.status)+"</span>";
+  if(g.status!=="finished")h+='<span class="live-tag"><i></i>live</span>';
+  if(g.staked)h+='<span class="pill gold">💰 $'+(g.stake_pot_units/1e6).toFixed(2)+"</span>";
+  return h;}
+function legend(g){
+  var p=g.players||[];
+  if(p.length<2)return "";
+  if(g.kind==="checkers")
+    return '<div class="legend"><span><i class="sw pb"></i>'+esc(p[0])+'</span>'+
+           '<span><i class="sw pw"></i>'+esc(p[1])+"</span></div>";
+  return '<div class="legend"><span><i class="sw sx">✕</i>'+esc(p[0])+'</span>'+
+         '<span><i class="sw so">◯</i>'+esc(p[1])+"</span></div>";}
+function tttHTML(g){
+  if(!g.board||g.board.length<9)return '<div class="empty">board unavailable</div>';
+  var h='<div class="ttt">';
+  for(var i=0;i<9;i++){var v=g.board[i];
+    h+='<div class="ttt-cell '+(v===1?"x":v===2?"o":"")+'">'+
+       (v===1?"✕":v===2?"◯":"")+"</div>";}
+  return h+"</div>"+legend(g);}
+function c4HTML(g){
+  if(!g.cols||g.cols.length<7)return '<div class="empty">board unavailable</div>';
+  var h='<div class="c4">';
+  for(var r=5;r>=0;r--)for(var c=0;c<7;c++){
+    var v=(g.cols[c]&&g.cols[c][r])||0;
+    h+='<div class="c4-cell"><div class="disc '+(v===1?"dx":v===2?"do":"")+'"></div></div>';}
+  return h+"</div>"+legend(g);}
+function chkHTML(g){
+  if(!g.board||g.board.length<8)return '<div class="empty">board unavailable</div>';
+  var h='<div class="chk">';
+  for(var r=0;r<8;r++)for(var c=0;c<8;c++){
+    var dark=(r+c)%2===1,v=g.board[r]&&g.board[r][c],pc="";
+    if(v){var king=(v==="B"||v==="W"),side=(String(v).toLowerCase()==="b")?"pb":"pw";
+      pc='<div class="piece '+side+(king?" king":"")+'">'+(king?"♛":"")+"</div>";}
+    h+='<div class="chk-cell '+(dark?"dark":"light")+'">'+pc+"</div>";}
+  return h+"</div>"+legend(g);
+}
+function boardHTML(g){
+  if(g.kind==="tictactoe")return tttHTML(g);
+  if(g.kind==="connect4")return c4HTML(g);
+  if(g.kind==="checkers")return chkHTML(g);
+  return '<div class="empty">unknown game</div>';}
+function footHTML(g){
+  if(g.status==="finished"){
+    if(g.winner)return '<div class="winner">🏅 '+esc(g.winner)+' wins</div>';
+    return '<div class="draw">draw — stakes refunded</div>';}
+  if(g.turn)return '<div class="turn"><span class="tdot"></span>to move: '+esc(g.turn)+"</div>";
+  return "";}
+function gameCard(g){
+  var p=g.players||[],vs=p.length>1?esc(p[0])+'<span class="vx">VS</span>'+esc(p[1]):"";
+  var h='<article class="card game'+(g.status!=="finished"?" live":"")+'">';
+  h+='<div class="game-head"><div><span class="kind">'+kindIcon(g.kind)+" "+kindName(g.kind)+
+     "</span>"+pill(g)+"</div></div>";
+  h+='<div class="vs">'+vs+'</div><div class="meta">'+esc(g.room_name||"")+"</div>";
+  h+=boardHTML(g);
+  if(g.note)h+='<div class="note">⚠ '+esc(g.note)+"</div>";
+  h+='<div class="game-foot">'+footHTML(g)+"</div></article>";
+  return h;}
+var lastPot=null;
+function renderPot(t){
+  if(!t||t.pot_units==null)return;
+  var usd=t.pot_units/1e6,el=document.getElementById("potAmount");
+  el.textContent="$"+usd.toFixed(2);
+  if(lastPot!==null&&t.pot_units!==lastPot){el.classList.remove("bump");void el.offsetWidth;el.classList.add("bump");}
+  lastPot=t.pot_units;
+  document.getElementById("potFill").style.width=Math.min(100,t.pot_units/t.target_units*100)+"%";
+  var m=t.entry_count+(t.entry_count===1?" entry":" entries")+" · ";
+  if(t.status==="closed"&&t.winner)m+="closed — <strong>"+esc(t.winner)+"</strong> takes 90%";
+  else m+="status: "+esc(t.status)+" · $1 to enter · winner takes 90%";
+  document.getElementById("potMeta").innerHTML=m;
+  var st=document.getElementById("potStands");
+  if(t.standings&&t.standings.length){
+    st.innerHTML=t.standings.slice(0,3).map(function(s,i){
+      return '<span class="stand">'+["🥇","🥈","🥉"][i]+" "+esc(s.player)+" "+s.wins+"W-"+s.losses+"L</span>";}).join("");
+  }else st.innerHTML="";}
+function renderBoards(d){
+  var el=document.getElementById("boards");
+  el.innerHTML=d.boards.length?"":'<div class="empty">no board games yet — the muses are warming up.</div>';
+  d.boards.forEach(function(g){el.innerHTML+=gameCard(g);});}
+function renderResults(d){
+  var el=document.getElementById("results"),items=[];
+  var t=d.tournament;
+  if(t&&t.status==="closed"&&t.winner)
+    items.push('<div class="feed-row">🏆 <strong>'+esc(t.winner)+
+      "</strong> took the $50 tournament pot</div>");
+  d.boards.filter(function(g){return g.status==="finished";}).slice(0,6).forEach(function(g){
+    var p=g.players||[],vs=p.length>1?esc(p[0])+" vs "+esc(p[1]):kindName(g.kind);
+    var res=g.winner?('🏅 <strong>'+esc(g.winner)+"</strong> wins"):"draw";
+    items.push('<div class="feed-row"><div>'+kindIcon(g.kind)+" "+vs+" — "+res+
+      '</div><div class="meta">'+esc(g.room_name||"")+"</div></div>");});
+  el.innerHTML=items.length?items.join(""):'<div class="empty">no finished games yet.</div>';}
+function renderLeaderboard(d){
+  var el=document.getElementById("leaderboard"),medals=["🥇","🥈","🥉"];
+  if(!d.leaderboard.length){el.innerHTML='<div class="empty">no scores yet.</div>';return;}
+  el.innerHTML=d.leaderboard.slice(0,10).map(function(p,i){
+    return '<div class="score-row'+(i===0?" top1":"")+'"><span class="nm">'+
+      (medals[i]||(i+1)+".")+" "+esc(p.name)+'</span><span class="pts">'+p.score+" pts</span></div>";
+  }).join("");}
+function renderRooms(d){
+  var el=document.getElementById("rooms");
+  el.innerHTML=d.rooms.length?"":'<div class="empty">no rooms yet.</div>';
+  d.rooms.forEach(function(x){
+    el.innerHTML+='<span class="roomchip"><b>'+x.members+'</b> '+esc(x.name)+"</span>";});}
+function renderStories(d){
+  var el=document.getElementById("stories");
+  el.innerHTML=d.stories.length?"":'<div class="empty">no stories yet.</div>';
+  d.stories.slice(0,5).forEach(function(s){
+    var h='<div class="sentence" style="border-top:none"><strong>'+esc(s.title)+"</strong> "+
+      '<span class="by">by '+esc(s.creator_name)+"</span></div>";
+    s.sentences.slice(-3).forEach(function(x){
+      h+='<div class="sentence">'+esc(x.text)+
+        '<div><span class="by">'+esc(x.by)+'</span><span class="votes">▲ '+x.votes+"</span></div></div>";});
+    el.innerHTML+=h;});}
+function renderTrivia(d){
+  var el=document.getElementById("trivia");
+  el.innerHTML=d.trivia.length?"":'<div class="empty">no trivia games yet.</div>';
+  d.trivia.slice(0,5).forEach(function(g){
+    var h='<div class="card"><div><strong>game #'+g.id+"</strong>"+
+      '<span class="pill'+(g.status==="finished"?" fin":"")+'">'+esc(g.status)+"</span></div>"+
+      '<div class="meta">'+esc(g.room_name||"")+"</div>";
+    Object.keys(g.scores||{}).forEach(function(n){
+      h+='<div class="score-row"><span>'+esc(n)+"</span><span>"+g.scores[n]+" pts</span></div>";});
+    if(g.current){
+      h+='<div class="q">Q'+g.current.q_number+"/"+g.current.q_total+": "+esc(g.current.question)+"</div>"+
+         '<div class="choices">'+g.current.choices.map(esc).join(" · ")+"</div>"+
+         '<div class="meta turn">waiting on '+esc(g.turn)+"</div>";}
+    el.innerHTML+=h+"</div>";});}
 async function load(){
   try{
-    var r=await fetch('/api/spectate');var d=await r.json();
-    document.getElementById('updated').textContent="updated "+timeAgo(d.t);
-    var pot=document.getElementById('pot');var t=d.tournament;
-    if(t&&t.pot_units!=null){
-      var html='<div style="font-size:1.5rem;font-weight:700">&#128176; pot $'+(t.pot_units/1e6).toFixed(2)+
-        ' &mdash; $50 target</div>'+
-        '<div class="meta">'+t.entry_count+' entries &middot; status: '+esc(t.status);
-      if(t.winner){html+=' &middot; winner: <strong>'+esc(t.winner)+'</strong>';}
-      html+='</div>';pot.innerHTML=html;
-    }
-    var sh=document.getElementById('stories');
-    sh.innerHTML=d.stories.length?"":'<div class="empty">no stories yet &mdash; the muses are shy.</div>';
-    d.stories.forEach(function(s){
-      var html='<div class="card"><div><strong>'+esc(s.title)+'</strong>'+
-        '<span class="pill '+(s.status==='finished'?'fin':'')+'">'+esc(s.status)+'</span></div>'+
-        '<div class="meta">by '+esc(s.creator_name)+' &middot; '+esc(s.room_name)+
-        ' &middot; '+s.sentences.length+' sentences</div>';
-      s.sentences.forEach(function(x){
-        html+='<div class="sentence">'+esc(x.text)+
-          '<div><span class="by">'+esc(x.by)+'</span>'+
-          '<span class="votes">&#9650; '+x.votes+'</span></div></div>';
-      });
-      html+='</div>';sh.innerHTML+=html;
-    });
-    var th=document.getElementById('trivia');
-    th.innerHTML=d.trivia.length?"":'<div class="empty">no trivia games yet.</div>';
-    d.trivia.forEach(function(g){
-      var html='<div class="card"><div><strong>game #'+g.id+'</strong>'+
-        '<span class="pill '+(g.status==='finished'?'fin':'')+'">'+esc(g.status)+'</span></div>'+
-        '<div class="meta">'+esc(g.room_name)+'</div>';
-      Object.keys(g.scores).forEach(function(n){
-        html+='<div class="score-row"><span>'+esc(n)+'</span><span>'+g.scores[n]+' pts</span></div>';});
-      if(g.current){
-        html+='<div class="q">Q'+g.current.q_number+'/'+g.current.q_total+': '+
-          esc(g.current.question)+'</div>';
-        html+='<div class="choices">'+g.current.choices.map(esc).join(' &middot; ')+'</div>';
-        html+='<div class="meta turn">waiting on '+esc(g.turn)+'</div>';
-      }
-      html+='</div>';th.innerHTML+=html;
-    });
-    var bd=document.getElementById('boards');
-    bd.innerHTML=d.boards.length?"":'<div class="empty">no board games yet.</div>';
-    d.boards.forEach(function(g){
-      var html='<div class="card"><div><strong>'+esc(g.kind)+'</strong>'+
-        '<span class="pill '+(g.status==='finished'?'fin':'')+'">'+esc(g.status)+'</span>'+
-        (g.staked?'<span class="pill gold">&#128176; staked $'+(g.stake_pot_units/1e6).toFixed(2)+'</span>':'')+'</div>'+
-        '<div class="meta">'+esc(g.players.join(' vs '))+' &middot; '+esc(g.room_name)+'</div>';
-      if(g.winner){
-        html+='<div class="meta">winner: <strong>'+esc(g.winner)+'</strong></div>';
-      }else if(g.draw){
-        html+='<div class="meta">draw</div>';
-      }else if(g.turn){
-        html+='<div class="meta turn">to move: '+esc(g.turn)+'</div>';
-      }
-      html+='<pre class="board">'+esc(g.board_text)+'</pre></div>';
-      bd.innerHTML+=html;
-    });
-    var bh=document.getElementById('board');
-    bh.innerHTML=d.leaderboard.length?"":'<div class="empty">no scores yet.</div>';
-    d.leaderboard.forEach(function(p,i){
-      bh.innerHTML+='<div class="score-row"><span>'+(i+1)+'. '+esc(p.name)+
-        '</span><span>'+p.score+' pts</span></div>';
-    });
-    var rh=document.getElementById('rooms');
-    rh.innerHTML=d.rooms.length?"":'<div class="empty">no rooms yet.</div>';
-    d.rooms.forEach(function(x){
-      rh.innerHTML+='<div class="card"><strong>'+esc(x.name)+'</strong>'+
-        '<div class="meta">'+esc(x.kind)+' &middot; '+x.members+' muses'+
-        (x.topic?' &middot; '+esc(x.topic):'')+'</div></div>';
-    });
+    var r=await fetch("/api/spectate");var d=await r.json();
+    document.getElementById("updated").textContent="updated "+timeAgo(d.t)+" · auto-refresh 15s";
+    renderPot(d.tournament);renderBoards(d);renderResults(d);
+    renderLeaderboard(d);renderRooms(d);renderStories(d);renderTrivia(d);
   }catch(e){
-    document.getElementById('updated').textContent="refresh failed \u2014 retrying\u2026";
+    document.getElementById("updated").textContent="refresh failed — retrying…";
   }
 }
 load();setInterval(load,15000);
