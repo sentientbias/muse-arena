@@ -873,6 +873,7 @@ def bj_total(cards):
 class Arena:
     def __init__(self, db_path):
         self.pg = bool(os.environ.get("DATABASE_URL"))
+        self._db_path = db_path  # lets background workers open their own conn
         self._lock = threading.Lock()
         if self.pg:
             if not HAVE_PG:
@@ -2859,14 +2860,64 @@ class Arena:
         raise ApiError(400, "exhibition supports checkers, connect4, "
                             "tictactoe, battleship")
 
-    def admin_exhibition(self, p1_name, p2_name, kind, games_n):
-        """Run real bot-vs-bot exhibition games between two agent personas.
-        Every game is played through the real engine (bots.py, same code
-        path as the house bot) to a genuine finish — wins, draws and
-        leaderboard points are real outcomes, not scripted. Personas are
-        registered as agent players on first use. Unstaked: no money moves.
-        Keep n small per call (<=6); each call is one HTTP request."""
+    def _exhibition_playout(self, game_ids):
+        """Background worker: play exhibition games to completion with the
+        house bots on both sides. Runs on its own DB connection so slow
+        games never block HTTP responses."""
         import bots as _bots  # lazy: bots.py imports app at module load
+        arena = Arena(self._db_path)  # own connection; pg uses DATABASE_URL
+        for gid in game_ids:
+            try:
+                arena.admin_playout_game(gid, _bots)
+            except Exception as e:  # noqa: BLE001 — one bad game must not
+                print("exhibition playout failed for game %s: %s"          # kill the batch
+                      % (gid, e))
+
+    def admin_playout_game(self, game_id, _bots=None):
+        """Play a single open game to a genuine finish, both sides driven
+        by the house bots. Used by the exhibition worker and (via admin)
+        to complete a stranded open game."""
+        if _bots is None:
+            import bots as _bots  # lazy: bots.py imports app at module load
+        g = self._board_row(int(game_id))
+        if g["status"] != "open":
+            raise ApiError(409, "game is not open (status=%s)" % g["status"])
+        kind = g["kind"]
+        if kind not in ("checkers", "connect4", "tictactoe", "battleship"):
+            raise ApiError(400, "playout supports checkers, connect4, "
+                                "tictactoe, battleship")
+        moves = 0
+        while True:
+            gg = self._board_row(int(game_id))
+            if gg["status"] != "open":
+                break
+            moves += 1
+            if moves > 800:
+                raise ApiError(500, "game %s did not terminate" % game_id)
+            players = json.loads(gg["players_json"])
+            turn = gg["turn_pid"]
+            side = players.index(turn)
+            actor = dict(self._row("SELECT * FROM players WHERE id=?",
+                                   (turn,)))
+            mv = self._exhibition_bot_move(
+                _bots, kind, json.loads(gg["state_json"]), side)
+            if not mv:
+                raise ApiError(500, "bot found no move in game %s" % game_id)
+            self.make_move(actor, int(game_id), mv)
+        fin = self._board_row(int(game_id))
+        return {"ok": True, "game_id": int(game_id),
+                "winner": (self._player_name(fin["winner_id"])
+                           if fin["winner_id"] else None),
+                "moves": moves, "win_reason": fin.get("win_reason")}
+
+    def admin_exhibition(self, p1_name, p2_name, kind, games_n):
+        """Create bot-vs-bot exhibition games between two agent personas and
+        return immediately; a background worker plays each game to a
+        genuine finish through the real engine (bots.py, same code path as
+        the house bot). Wins, draws and leaderboard points are real
+        outcomes, not scripted. Personas are registered as agent players
+        on first use. Unstaked: no money moves. Poll /api/spectate or the
+        leaderboard to watch them land."""
         kind = (kind or "").lower()
         if kind not in ("checkers", "connect4", "tictactoe", "battleship"):
             raise ApiError(400, "kind must be one of: checkers, connect4, "
@@ -2875,8 +2926,8 @@ class Arena:
             n = int(games_n)
         except (TypeError, ValueError):
             raise ApiError(400, "games must be an integer")
-        if not 1 <= n <= 6:
-            raise ApiError(400, "games must be 1..6 per call")
+        if not 1 <= n <= 8:
+            raise ApiError(400, "games must be 1..8 per call")
 
         def _persona(name):
             name = (name or "").strip()
@@ -2897,39 +2948,20 @@ class Arena:
         room_id = self._human_room()
         self._join_human_room(room_id, p1["id"])
         self._join_human_room(room_id, p2["id"])
-        results = []
+        game_ids = []
         for i in range(n):
             a, b = (p1, p2) if i % 2 == 0 else (p2, p1)
             gid = self.new_board_game(a, room_id, kind, b["name"])["id"]
             if kind == "battleship":
                 self.deploy_fleet(a, gid, bs_random_fleet())
                 self.deploy_fleet(b, gid, bs_random_fleet())
-            moves = 0
-            while True:
-                gg = self._board_row(gid)
-                if gg["status"] != "open":
-                    break
-                moves += 1
-                if moves > 800:
-                    raise ApiError(500, "exhibition game %d did not "
-                                        "terminate" % gid)
-                players = json.loads(gg["players_json"])
-                turn = gg["turn_pid"]
-                side = players.index(turn)
-                actor = a if turn == a["id"] else b
-                mv = self._exhibition_bot_move(
-                    _bots, kind, json.loads(gg["state_json"]), side)
-                if not mv:
-                    raise ApiError(500, "bot found no move in game %d" % gid)
-                self.make_move(actor, gid, mv)
-            fin = self._board_row(gid)
-            wname = (self._player_name(fin["winner_id"])
-                     if fin["winner_id"] else None)
-            results.append({"game_id": gid, "winner": wname,
-                            "moves": moves,
-                            "win_reason": fin.get("win_reason")})
+            game_ids.append(gid)
+        t = threading.Thread(target=self._exhibition_playout,
+                             args=(game_ids,), daemon=True)
+        t.start()
         return {"ok": True, "kind": kind,
-                "personas": [p1["name"], p2["name"]], "results": results}
+                "personas": [p1["name"], p2["name"]],
+                "game_ids": game_ids, "status": "playing"}
 
     # -- GAME: tournament pot (v1.5) -------------------------------------
     # ONE visible pot. $1 USDC entries feed it; it pays out when it hits $50.
@@ -4595,6 +4627,7 @@ ROUTES = [
     ("POST", r"^/api/admin/stakes/void$", "h_admin_void"),
     ("POST", r"^/api/admin/games/close$", "h_admin_close"),
     ("POST", r"^/api/admin/exhibition$", "h_admin_exhibition"),
+    ("POST", r"^/api/admin/games/playout$", "h_admin_playout"),
     ("POST", r"^/api/tournament/enter$", "h_tournament_enter"),
     ("GET",  r"^/api/tournament$", "h_tournament"),
     ("GET",  r"^/api/leaderboard$", "h_leaderboard"),
@@ -4947,6 +4980,14 @@ class Handler(BaseHTTPRequestHandler):
         return self.arena.admin_exhibition(body.get("p1"), body.get("p2"),
                                            body.get("kind"),
                                            body.get("games", 1))
+
+    def h_admin_playout(self, body, qs):
+        self._admin(body, qs)
+        gid = int(body.get("game_id"))
+        t = threading.Thread(
+            target=self.arena._exhibition_playout, args=([gid],), daemon=True)
+        t.start()
+        return {"ok": True, "game_id": gid, "status": "playing"}
 
     def h_stakes(self, body, qs):
         # public board: open stakes, completed games, payouts
