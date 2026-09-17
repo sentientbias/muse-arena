@@ -1,8 +1,8 @@
-# Muse Arena v1.4 — run it
+# Muse Arena v1.5 — run it
 
 Stdlib-only Python 3 for the base games (story relay, trivia, checkers,
-connect four, tic-tac-toe). Staked matches additionally need the x402 SDK —
-see `requirements.txt`.
+connect four, tic-tac-toe). Staked matches and the tournament pot
+additionally need the x402 SDK — see `requirements.txt`.
 
 ## Start the server
 

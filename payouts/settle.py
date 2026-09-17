@@ -42,6 +42,10 @@ USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
 CHAIN_ID = 8453
 STAKE_UNITS = 1_000_000      # $1.00
 WIN_PAYOUT_UNITS = 1_900_000  # $1.90 (winner); $0.10 rake stays in the wallet
+# v1.5 tournament pot: pays out at $50. Winner takes 90%, house keeps 10%.
+# (50_000_000 units = $50.00; 90% = 45_000_000; 10% = 5_000_000.)
+TOURNAMENT_TARGET_UNITS = 50_000_000
+TOURNAMENT_WIN_BPS = 9000
 RPC_URLS = [
     "https://mainnet.base.org",
     "https://base.llamarpc.com",
@@ -71,6 +75,27 @@ def compute_payouts(winner_id, stakes):
         return [(addrs[winner_id], WIN_PAYOUT_UNITS, "win")]
     kind = "draw_refund" if len(stakes) > 1 else "refund"
     return [(s["player_address"], s["amount_units"], kind) for s in stakes]
+
+
+def compute_tournament_payouts(entries, winner_id, pot_units):
+    """Pure tournament payout math — all in integer base units.
+
+    entries: list of dicts with player_id, player_address, amount_units.
+    winner_id: arena player id of the tournament winner, or None when no
+    entrant won a tournament game (degenerate case).
+    Returns [(player_address, amount_units, kind)] where kind is
+    'tournament_win' | 'tournament_refund'.
+    Winner takes exactly 90% of the actual pot; the house keeps the rest.
+    No winner -> every entry refunded 1:1, house takes nothing.
+    """
+    if winner_id is not None:
+        addrs = {e["player_id"]: e["player_address"] for e in entries}
+        if winner_id not in addrs:
+            raise ValueError(f"tournament winner {winner_id} has no entry")
+        win_units = pot_units * TOURNAMENT_WIN_BPS // 10000
+        return [(addrs[winner_id], win_units, "tournament_win")]
+    return [(e["player_address"], e["amount_units"], "tournament_refund")
+            for e in entries]
 
 
 # ---------------------------------------------------------------- db
@@ -103,6 +128,25 @@ def load_settlements(arena):
                     "winner_id": g["game_winner"], "stakes": stakes,
                     "payouts": payouts})
     return out
+
+
+def load_tournament_settlement(arena):
+    """Load the closed tournament pot, if any. Returns None when the
+    tournament is still open (or already settled)."""
+    t = arena._row("SELECT * FROM tournament WHERE id=1")
+    if not t or dict(t)["status"] != "closed":
+        return None
+    t = dict(t)
+    entries = [dict(r) for r in arena._rows(
+        "SELECT player_id, player_address, amount_units, status"
+        " FROM tournament_entries WHERE status='closed'"
+        " ORDER BY created_at, id")]
+    if not entries:
+        return None
+    pot = sum(e["amount_units"] for e in entries)
+    payouts = compute_tournament_payouts(entries, t["winner_id"], pot)
+    return {"winner_id": t["winner_id"], "entries": entries,
+            "pot_units": pot, "payouts": payouts}
 
 
 # ---------------------------------------------------------------- chain
@@ -190,8 +234,11 @@ def main():
 
     arena = open_db(args.db)
     settlements = load_settlements(arena)
+    tsettle = load_tournament_settlement(arena)
     orphans = [dict(r) for r in arena._rows(
         "SELECT * FROM orphan_payments ORDER BY created_at DESC LIMIT 50")]
+    torphans = [dict(r) for r in arena._rows(
+        "SELECT * FROM tournament_orphans ORDER BY created_at DESC LIMIT 50")]
 
     print(f"[settle] mode: {'DRY-RUN (no transactions broadcast)' if dry_run else 'LIVE'}")
     print(f"[settle] games to settle: {len(settlements)}")
@@ -202,15 +249,28 @@ def main():
         for addr, units, kind in s["payouts"]:
             total_out += units
             print(f"  {kind:11s} {fmt_usd(units):>8s} -> {addr}")
+    if tsettle:
+        print(f"\n[settle] TOURNAMENT: pot {fmt_usd(tsettle['pot_units'])} "
+              f"({len(tsettle['entries'])} entries) "
+              f"winner_id={tsettle['winner_id']}")
+        for addr, units, kind in tsettle["payouts"]:
+            total_out += units
+            print(f"  {kind:16s} {fmt_usd(units):>8s} -> {addr}")
     print(f"\ntotal outflow: {fmt_usd(total_out)} USDC "
-          f"({len(settlements)} game(s))")
+          f"({len(settlements)} game(s)"
+          f"{' + tournament' if tsettle else ''})")
     if orphans:
         print(f"\n[settle] WARNING: {len(orphans)} orphan payment(s) need MANUAL refund:")
         for o in orphans:
             print(f"  game #{o['game_id']} {fmt_usd(o['amount_units'])} "
                   f"payer={o['payer']} tx={o['tx_hash']} ({o['reason']})")
+    if torphans:
+        print(f"\n[settle] WARNING: {len(torphans)} tournament orphan(s) need MANUAL refund:")
+        for o in torphans:
+            print(f"  {fmt_usd(o['amount_units'])} "
+                  f"payer={o['payer']} tx={o['tx_hash']} ({o['reason']})")
 
-    if not settlements:
+    if not settlements and not tsettle:
         print("[settle] nothing to do.")
         return 0
 
@@ -243,6 +303,35 @@ def main():
                      "WHERE game_id=? AND status='complete'",
                      (new_status, res["tx_hash"], s["game_id"]))
             print(f"[settle]   game #{s['game_id']} stakes -> {new_status}")
+    if tsettle:
+        print("\n[settle] LIVE — broadcasting the tournament payout.")
+        done = []  # (player_address, tx_hash, kind) — only mined-success
+        for addr, units, kind in tsettle["payouts"]:
+            res = send_usdc(key_hex, addr, units, dry_run=False)
+            print(f"[settle] broadcast {res['desc']} tx={res['tx_hash']}")
+            receipt = wait_receipt(res["tx_hash"])
+            ok = receipt.get("status") == "0x1"
+            print(f"[settle]   mined: {res['tx_hash']} status={'1 ok' if ok else '0 FAILED'}")
+            if not ok:
+                print("[settle]   NOT marking paid — investigate before retrying",
+                      file=sys.stderr)
+                continue
+            done.append((addr, res["tx_hash"], kind))
+        # ledger updates only for mined-success receipts, matched by address
+        for addr, tx_hash, kind in done:
+            new_status = "paid" if kind == "tournament_win" else "refunded"
+            arena._q("UPDATE tournament_entries SET status=?, payout_tx=?"
+                     " WHERE player_address=? AND status='closed'",
+                     (new_status, tx_hash, addr))
+            print(f"[settle]   tournament entry {addr} -> {new_status}")
+        if len(done) == len(tsettle["payouts"]):
+            arena._q("UPDATE tournament SET status='settled' "
+                     "WHERE id=1 AND status='closed'")
+            print("[settle]   tournament settled")
+        else:
+            print("[settle]   WARNING: some tournament payouts failed — "
+                  "tournament left 'closed' for manual follow-up",
+                  file=sys.stderr)
     print("[settle] done.")
     return 0
 

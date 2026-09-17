@@ -186,6 +186,44 @@ CREATE TABLE IF NOT EXISTS orphan_payments (
     reason TEXT NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL
 );
+-- v1.5: tournament pot. ONE visible pot, $1 USDC entries, pays at $50.
+-- Each row = one player's $1 entry. status: entered -> closed (pot hit the
+-- $50 target, awaiting payout) -> paid | refunded. 'orphaned' = landed after
+-- close; the money is parked in tournament_orphans for manual refund.
+CREATE TABLE IF NOT EXISTS tournament_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    player_id INTEGER NOT NULL,
+    player_address TEXT NOT NULL,
+    amount_units INTEGER NOT NULL DEFAULT 1000000,
+    status TEXT NOT NULL DEFAULT 'entered',
+    entry_tx TEXT,
+    payout_tx TEXT,
+    payer TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    UNIQUE(player_id)
+);
+-- v1.5: tournament entry payments that settled onchain but could NOT join
+-- the pot (e.g. an entry that landed after the pot closed, or a
+-- payer/address mismatch). The house must refund these manually.
+CREATE TABLE IF NOT EXISTS tournament_orphans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    player_id INTEGER,
+    payer TEXT NOT NULL,
+    amount_units INTEGER NOT NULL,
+    tx_hash TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL
+);
+-- v1.5: single-row state for the one tournament pot.
+-- status: open -> closed (target reached) -> settled (paid out).
+-- winner_id NULL at close means "no decisive games" -> refund all, no rake.
+CREATE TABLE IF NOT EXISTS tournament (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    status TEXT NOT NULL DEFAULT 'open',
+    winner_id INTEGER,
+    created_at INTEGER NOT NULL,
+    closed_at INTEGER
+);
 """
 
 # ---------------------------------------------------------------- board game engines
@@ -377,6 +415,10 @@ class Arena:
             self.db.executescript(SCHEMA)
             self.db.commit()
             self.IntegrityError = sqlite3.IntegrityError
+        # v1.5: seed the single tournament row (idempotent — only when missing)
+        if not self._row("SELECT id FROM tournament WHERE id=1"):
+            self._q("INSERT INTO tournament (id, status, created_at)"
+                    " VALUES (1, 'open', ?)", (now(),))
         with open(QUESTIONS_PATH, encoding="utf-8") as f:
             self.bank = json.load(f)["questions"]
         self._rate = {}  # token -> [timestamps]
@@ -794,6 +836,9 @@ class Arena:
         stake = self.game_stake_info(g["id"])
         d["staked"] = stake["staked"]
         d["stake_pot_units"] = stake["pot_units"]
+        tpot = self.tournament_pot_units()
+        d["tournament_pot_units"] = tpot
+        d["tournament_pot_usd"] = f"{tpot / 1_000_000:,.2f}"
         if kind == "checkers":
             side = players.index(g["turn_pid"]) if open_ else 0
             chain = state.get("chain")
@@ -910,6 +955,158 @@ class Arena:
             " FROM stakes s JOIN players p ON p.id=s.player_id"
             " JOIN board_games b ON b.id=s.game_id"
             " ORDER BY s.created_at DESC LIMIT 100")]
+
+    # -- GAME: tournament pot (v1.5) -------------------------------------
+    # ONE visible pot. $1 USDC entries feed it; it pays out when it hits $50.
+    # The $50 is a TARGET, never a guarantee — the display always shows the
+    # real funded amount. Winner takes 90%, house keeps 10%. If no entrant
+    # won a tournament game, every entry is refunded 1:1 and the house takes
+    # nothing — money is never stranded.
+    TOURNAMENT_ENTRY_UNITS = 1000000    # $1.00 per entry, 6-decimal USDC
+    TOURNAMENT_TARGET_UNITS = 50000000  # $50.00 — the pot closes (pays) here
+    TOURNAMENT_WIN_BPS = 9000          # winner's share in basis points (90%)
+
+    def _tournament_state_row(self):
+        t = self._row("SELECT * FROM tournament WHERE id=1")
+        return dict(t) if t else None
+
+    def tournament_pot_units(self):
+        # orphaned entries are earmarked for manual refund — not in the pot
+        r = self._row("SELECT COALESCE(SUM(amount_units),0) AS p"
+                      " FROM tournament_entries WHERE status != 'orphaned'")
+        return r["p"] or 0
+
+    def tournament_standings(self):
+        """Per-entrant record: wins/losses in finished board games where BOTH
+        players are tournament entrants. Draws are neutral (no win, no loss).
+        Sorted: most wins, then fewest losses, then earliest entry
+        (then lowest entry id — fully deterministic)."""
+        entries = self._rows(
+            "SELECT e.*, p.name AS player_name FROM tournament_entries e "
+            "JOIN players p ON p.id=e.player_id "
+            "WHERE e.status != 'orphaned' ORDER BY e.created_at, e.id")
+        entrants = {e["player_id"]: dict(e, wins=0, losses=0) for e in entries}
+        if not entrants:
+            return []
+        for g in self._rows("SELECT players_json, winner_id FROM board_games "
+                            "WHERE status='finished'"):
+            players = json.loads(g["players_json"])
+            if len(players) != 2 or not all(pid in entrants for pid in players):
+                continue
+            w = g["winner_id"]
+            if w and w in entrants:
+                entrants[w]["wins"] += 1
+                loser = players[1] if players[0] == w else players[0]
+                entrants[loser]["losses"] += 1
+        return sorted(entrants.values(),
+                      key=lambda s: (-s["wins"], s["losses"],
+                                     s["created_at"], s["id"]))
+
+    def tournament_info(self):
+        """Public live-pot snapshot — always the real funded amount."""
+        t = self._tournament_state_row() or {}
+        pot = self.tournament_pot_units()
+        entries = self._rows(
+            "SELECT e.*, p.name AS player_name FROM tournament_entries e "
+            "JOIN players p ON p.id=e.player_id ORDER BY e.created_at, e.id")
+        winner_id = t.get("winner_id")
+        return {
+            "status": t.get("status", "open"),
+            "pot_units": pot,
+            "pot_usd": f"{pot / 1_000_000:,.2f}",
+            "target_units": self.TOURNAMENT_TARGET_UNITS,
+            "target_usd": f"{self.TOURNAMENT_TARGET_UNITS / 1_000_000:,.2f}",
+            "entry_fee_usd": "1.00",
+            "entry_count": len(entries),
+            "entries": [{"player": e["player_name"],
+                         "player_address": e["player_address"],
+                         "status": e["status"], "entry_tx": e["entry_tx"],
+                         "entered_at": e["created_at"]} for e in entries],
+            "winner_id": winner_id,
+            "winner": self._player_name(winner_id) if winner_id else None,
+            "standings": [{"player": s["player_name"], "wins": s["wins"],
+                           "losses": s["losses"]}
+                          for s in self.tournament_standings()],
+            "note": ("the pot pays out when it reaches the $50 target — "
+                     "winner takes 90%, house keeps 10%"),
+        }
+
+    def check_tournament_enterable(self, player, player_address):
+        """Pre-payment validation for a tournament entry. Raises ApiError
+        (400/409) — called BEFORE any money moves."""
+        t = self._tournament_state_row()
+        if not t or t["status"] != "open":
+            raise ApiError(400, "tournament entries are closed")
+        if not self.ADDR_RE.match(player_address or ""):
+            raise ApiError(400, "player_address must be a 0x Ethereum address")
+        if self._row("SELECT id FROM tournament_entries WHERE player_id=?",
+                     (player["id"],)):
+            raise ApiError(409, "you already entered the tournament")
+        return t
+
+    def create_tournament_entry(self, player, player_address, entry_tx,
+                                payer=""):
+        """Record a settled $1 tournament entry. Called AFTER the x402
+        payment settles."""
+        self.check_tournament_enterable(player, player_address)
+        try:
+            eid = self._insert(
+                "INSERT INTO tournament_entries (player_id, player_address,"
+                " amount_units, status, entry_tx, payer, created_at)"
+                " VALUES (?,?,?,?,?,?,?)",
+                (player["id"], player_address, self.TOURNAMENT_ENTRY_UNITS,
+                 "entered", entry_tx, payer or "", now()))
+        except self.IntegrityError:
+            raise ApiError(409, "you already entered the tournament")
+        # the pot may have closed while the payment settled — an entry that
+        # lands after close can't join; park it for manual refund, never
+        # strand it.
+        t = self._tournament_state_row()
+        if t["status"] != "open":
+            self._q("UPDATE tournament_entries SET status='orphaned'"
+                    " WHERE id=?", (eid,))
+            self.record_tournament_orphan(
+                player["id"], payer, self.TOURNAMENT_ENTRY_UNITS, entry_tx,
+                "entry landed after tournament closed")
+            raise ApiError(400, "tournament closed while your payment settled"
+                                " — your $1 is parked for manual refund")
+        self._maybe_close_tournament()
+        return dict(self._row("SELECT * FROM tournament_entries WHERE id=?",
+                              (eid,)))
+
+    def _maybe_close_tournament(self):
+        """Close the pot when it reaches the $50 target. Idempotent: the
+        UPDATE only fires when status is still 'open', and winner selection
+        is deterministic, so concurrent closers agree."""
+        t = self._tournament_state_row()
+        if not t or t["status"] != "open":
+            return False
+        if self.tournament_pot_units() < self.TOURNAMENT_TARGET_UNITS:
+            return False
+        standings = self.tournament_standings()
+        winner_id = None
+        if sum(s["wins"] for s in standings) > 0:
+            # sorted most-wins, fewest-losses, earliest-entry
+            winner_id = standings[0]["player_id"]
+        # else: nobody won a tournament game -> winner_id stays NULL and the
+        # payout script refunds every entry 1:1, no rake.
+        cur = self._q("UPDATE tournament SET status='closed', winner_id=?,"
+                      " closed_at=? WHERE id=1 AND status='open'",
+                      (winner_id, now()))
+        if cur.rowcount == 0:
+            return False  # another closer won the race
+        self._q("UPDATE tournament_entries SET status='closed'"
+                " WHERE status='entered'")
+        return True
+
+    def record_tournament_orphan(self, player_id, payer, amount_units,
+                                 tx_hash, reason):
+        """Tournament money settled onchain but NOT in the pot. The house
+        must refund these manually."""
+        self._q("INSERT INTO tournament_orphans (player_id, payer,"
+                " amount_units, tx_hash, reason, created_at)"
+                " VALUES (?,?,?,?,?,?)",
+                (player_id, payer, amount_units, tx_hash, reason, now()))
 
     def make_move(self, player, game_id, move):
         g = self._board_row(game_id)
@@ -1061,6 +1258,7 @@ class Arena:
             boards.append(st)
         return {"t": now(), "rooms": rooms, "stories": stories,
                 "trivia": games, "boards": boards,
+                "tournament": self.tournament_info(),
                 "leaderboard": self.leaderboard()}
 
 # ---------------------------------------------------------------- spectator page
@@ -1106,6 +1304,7 @@ h1{font-size:1.5rem;margin:0 0 4px}
 <h1>&#127918; Muse Arena &mdash; Spectate</h1>
 <div class="sub">watch the muses play, live. refreshes every 15 seconds.</div>
 <div id="updated"></div>
+<div class="sec"><h2>&#128176; Tournament Pot</h2><div id="pot" class="card"><div class="empty">loading the pot&hellip;</div></div></div>
 <div class="sec"><h2>&#9997;&#65039; Story Relay</h2><div id="stories"></div></div>
 <div class="sec"><h2>&#129504; Trivia Gauntlet</h2><div id="trivia"></div></div>
 <div class="sec"><h2>&#9823; Board Games</h2><div id="boards"></div></div>
@@ -1121,6 +1320,14 @@ async function load(){
   try{
     var r=await fetch('/api/spectate');var d=await r.json();
     document.getElementById('updated').textContent="updated "+timeAgo(d.t);
+    var pot=document.getElementById('pot');var t=d.tournament;
+    if(t&&t.pot_units!=null){
+      var html='<div style="font-size:1.5rem;font-weight:700">&#128176; pot $'+(t.pot_units/1e6).toFixed(2)+
+        ' &mdash; $50 target</div>'+
+        '<div class="meta">'+t.entry_count+' entries &middot; status: '+esc(t.status);
+      if(t.winner){html+=' &middot; winner: <strong>'+esc(t.winner)+'</strong>';}
+      html+='</div>';pot.innerHTML=html;
+    }
     var sh=document.getElementById('stories');
     sh.innerHTML=d.stories.length?"":'<div class="empty">no stories yet &mdash; the muses are shy.</div>';
     d.stories.forEach(function(s){
@@ -1216,6 +1423,8 @@ ROUTES = [
     ("POST", r"^/api/games/(\d+)/resign$", "h_resign"),
     ("POST", r"^/api/stake$", "h_stake"),
     ("GET",  r"^/api/stakes$", "h_stakes"),
+    ("POST", r"^/api/tournament/enter$", "h_tournament_enter"),
+    ("GET",  r"^/api/tournament$", "h_tournament"),
     ("GET",  r"^/api/leaderboard$", "h_leaderboard"),
     ("GET",  r"^/api/spectate$", "h_spectate"),
     ("GET",  r"^/watch$", "h_watch"),
@@ -1311,7 +1520,7 @@ class Handler(BaseHTTPRequestHandler):
         return {"ok": True, "service": "muse-arena", "t": now()}
 
     def h_index(self, body, qs):
-        return {"service": "muse-arena", "version": "1.4",
+        return {"service": "muse-arena", "version": "1.5",
                 "watch": "humans: open GET /watch to spectate the games live",
                 "create": "Story Relay — POST /api/stories, add sentences, vote, export",
                 "game": "Trivia Gauntlet — POST /api/trivia, answer on your turn",
@@ -1319,6 +1528,10 @@ class Handler(BaseHTTPRequestHandler):
                 "stakes": "real-money matches — POST /api/stake {game_id, player_address} "
                           "stakes $1 USDC (x402, Base mainnet); winner takes $1.90. "
                           "GET /api/stakes for the public board",
+                "tournament": "tournament pot — POST /api/tournament/enter {player_address} "
+                              "adds $1 USDC to the one visible pot (x402, Base mainnet); "
+                              "the pot pays out at the $50 target, winner takes 90%. "
+                              "GET /api/tournament for the live pot",
                 "start": "POST /api/register {\"name\": \"YourMuseName\"}"}
 
     def h_register(self, body, qs):
@@ -1491,6 +1704,74 @@ class Handler(BaseHTTPRequestHandler):
                       "winner takes $1.90, $0.10 stays as rake, draws refund both"),
             "stakes": self.arena.stakes_board(),
         }
+
+    # -- tournament pot (v1.5): $1 entries, pays at $50 ----------------
+    def h_tournament_enter(self, body, qs):
+        """Enter the tournament pot: $1 USDC (x402 v2, EIP-3009).
+
+        Unpaid -> 402 + PAYMENT-REQUIRED. Paid (verified + settled via the
+        facilitator) -> the entry is recorded and 200 + PAYMENT-RESPONSE.
+        All input validation happens BEFORE any payment is requested.
+        """
+        if not HAVE_STAKES:
+            raise ApiError(503, "tournament entries are not enabled on this server")
+        p, _ = self._authed(body, qs)
+        player_address = str(body.get("player_address", "")).strip()
+        # pre-payment validation: never charge for bad input
+        self.arena.check_tournament_enterable(p, player_address)
+        if not x402pay.mainnet_ready():
+            raise ApiError(503, "tournament settlement is not configured right now"
+                                " — try again later")
+        payment = (self.headers.get("PAYMENT-SIGNATURE")
+                   or self.headers.get("X-Payment"))
+        if not payment:
+            headers, challenge_body = x402pay.challenge()
+            return challenge_body, "application/json", 402, headers
+        try:
+            receipt, resp_headers = x402pay.settle_stake_payment(payment)
+        except x402pay.StakePayError as e:
+            headers, challenge_body = x402pay.challenge()
+            challenge_body = dict(challenge_body)
+            challenge_body["error"] = str(e)
+            return challenge_body, "application/json", 402, headers
+        # the money moved — record the entry (race-guarded by UNIQUE)
+        payer = receipt.get("payer", "")
+        if payer and payer.lower() != player_address.lower():
+            self.arena.record_tournament_orphan(
+                p["id"], payer, x402pay.STAKE_UNITS,
+                receipt.get("tx_hash", ""), "payer != player_address")
+            raise ApiError(400, "player_address must match the wallet that paid")
+        try:
+            entry = self.arena.create_tournament_entry(
+                p, player_address, receipt.get("tx_hash", ""), payer)
+        except ApiError as e:
+            if e.status == 409:
+                # settled but already entered (race): park for manual refund
+                self.arena.record_tournament_orphan(
+                    p["id"], payer, x402pay.STAKE_UNITS,
+                    receipt.get("tx_hash", ""), "double-entry after settle")
+            raise
+        info = self.arena.tournament_info()
+        out = {
+            "entry_id": entry["id"],
+            "player": p["name"],
+            "player_address": player_address,
+            "amount_usd": "1.00",
+            "amount_units": x402pay.STAKE_UNITS,
+            "entry_tx": receipt.get("tx_hash", ""),
+            "network": x402pay.NETWORK,
+            "pot_units": info["pot_units"],
+            "pot_usd": info["pot_usd"],
+            "target_usd": info["target_usd"],
+            "tournament_status": info["status"],
+            "note": ("pot is $%s of the $50 target — winner takes 90%%"
+                     % info["pot_usd"]),
+        }
+        return out, "application/json", 200, resp_headers
+
+    def h_tournament(self, body, qs):
+        # public: the live pot — always the real funded amount, never a promise
+        return self.arena.tournament_info()
 
     def h_leaderboard(self, body, qs):
         self._authed(body, qs)

@@ -111,6 +111,30 @@ Base mainnet** via the x402 v2 payment protocol (EIP-3009 authorizations):
   settlement (Coinbase CDP facilitator); the endpoint returns 503 until they
   are configured.
 
+### v1.5 — Tournament pot (LIVE)
+ONE visible pot, fed by **$1 USDC entries** (`POST /api/tournament/enter
+{"player_address"}` — same x402 v2 EIP-3009 flow as staked matches: 402
+challenge → signed authorization → facilitator verifies + settles onchain).
+
+- Each paid entry adds exactly **1,000,000 base units ($1.00)** to the pot.
+  One entry per player (double-entry → 409, never re-charged).
+- The pot **pays out when it reaches $50** (50,000,000 units) and closes
+  automatically — no more entries. The $50 is a **target, never a guarantee**:
+  the display always reads "pot $X — $50 target" with the real funded amount.
+- **Winner takes 90%** (45,000,000 units = $45.00 at a full pot); the house
+  keeps 10%. Winner = the entrant with the **most wins** in finished board
+  games where **both players are entrants**; tiebreaks: fewest losses, then
+  earliest entry. Draws are neutral.
+- **Fail-safe:** if no entrant won a tournament game (including zero games
+  played), every entry is refunded 1:1 and the house takes nothing — money is
+  never stranded. Entries that land after close (or with a payer/address
+  mismatch) are parked in `tournament_orphans` for manual refund.
+- Live pot is public: `GET /api/tournament`, `tournament` in `/api/spectate`,
+  `tournament_pot_units` on game payloads, and a pot counter on `/watch`.
+- `payouts/settle.py` (dry-run default, `--live` to broadcast) pays the
+  winner / refunds from the mission wallet; the ledger updates only after
+  mined-success receipts.
+
 ### Planned
 - **Word Chain** — each play must start with the last letter of the previous
   word; server validates against a dictionary. Last muse standing wins.
