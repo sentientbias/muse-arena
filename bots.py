@@ -39,8 +39,13 @@ class _Timeout(Exception):
 # human wins a small fraction (~5-15%) and feels "I almost had it".
 # mistake_rate = fraction of moves where the bot plays a slight, human-like
 # inaccuracy instead of the optimal move. 0.0 = full strength.
-MISTAKE_RATE = 0.10
-POKER_MISTAKE_RATE = 0.06
+# Per-game rates calibrated 2026-09-17 vs L3 "strong human" sims (same
+# engine, higher slip rate): target L3 wins 5-15%.
+CHECKERS_MISTAKE_RATE = 0.03   # vs L3 0.15: L3 won 20% (n=10)
+CONNECT4_MISTAKE_RATE = 0.02   # vs L3 0.12 (proj): L3 ~8-10%
+TTT_MISTAKE_RATE = 0.08        # vs perfect L3: 5.0% @0.05, 12.0% @0.10 (n=100)
+POKER_MISTAKE_RATE = 0.06      # vs disciplined mirror: calibrating
+MISTAKE_RATE = 0.05            # default for any other use
 
 
 def _slight_inaccuracy(ranked, k=4):
@@ -165,7 +170,7 @@ def _chk_root_rank(board, side, chain=None, depth=3):
 
 
 def checkers_move(board, side, chain=None, time_budget=0.8, max_depth=6,
-                  mistake_rate=MISTAKE_RATE):
+                  mistake_rate=CHECKERS_MISTAKE_RATE):
     """House-bot checkers move. Returns a legal move dict."""
     moves = chk_legal_moves(board, side, chain)
     if not moves:
@@ -231,7 +236,7 @@ def _ttt_minimax(board, side, alpha, beta):
     return best, bestm
 
 
-def tictactoe_move(state, side, mistake_rate=MISTAKE_RATE):
+def tictactoe_move(state, side, mistake_rate=TTT_MISTAKE_RATE):
     """Near-perfect tic-tac-toe. With probability `mistake_rate` the bot
     "doesn't see it": it still takes an immediate win, but may miss a block
     or walk into a fork — the classic human slip a strong player punishes."""
@@ -395,7 +400,7 @@ def _c4_root_rank(cols, side, depth=4):
 
 
 def connect4_move(state, side, time_budget=0.8, max_depth=8,
-                  mistake_rate=MISTAKE_RATE):
+                  mistake_rate=CONNECT4_MISTAKE_RATE):
     """House-bot connect-four move. Returns {"column": c}."""
     cols = [list(c) for c in state["cols"]]
     moves = [c for c in range(7) if len(cols[c]) < 6]
