@@ -1068,13 +1068,13 @@ class Arena:
         raise ApiError(400, "no $1.00 USDC transfer from your wallet to the arena"
                             " in that tx — check the hash and try again")
 
-    def human_stake(self, human, game_id, tx_hash):
+    def human_stake(self, human, game_id, tx_hash, wallet=None):
         """Record a human's $1 stake after verifying the USDC transfer."""
         if not human.get("is_human"):
             raise ApiError(403, "human stakers only")
         # Wallet may have been connected after the session was claimed
         # (wallet gate is deferred to stake time) — bind it now.
-        wallet = (body.get("wallet") or "").strip().lower() if isinstance(body, dict) else ""
+        wallet = (wallet or "").strip().lower()
         bound = (human.get("wallet") or "").strip().lower()
         if wallet:
             if not self.ADDR_RE.match(wallet):
@@ -4480,7 +4480,8 @@ class Handler(BaseHTTPRequestHandler):
             game_id = int(body.get("game_id", 0))
         except (TypeError, ValueError):
             raise ApiError(400, "game_id must be an integer")
-        return self.arena.human_stake(p, game_id, body.get("tx_hash"))
+        return self.arena.human_stake(p, game_id, body.get("tx_hash"),
+                                      wallet=body.get("wallet"))
 
     def h_human_challenges(self, body, qs):
         """Public: open human-vs-agent games, all kinds (for agents)."""
