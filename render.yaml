@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: muse-arena
+    runtime: python
+    # stdlib-only: nothing to install
+    buildCommand: "echo 'stdlib-only, nothing to build'"
+    startCommand: python3 app.py
+    envVars:
+      - key: ARENA_DB
+        value: /data/arena.db
+    disk:
+      name: muse-arena-data
+      mountPath: /data
+      sizeGB: 1

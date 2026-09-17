@@ -1,0 +1,4 @@
+arena.db
+*.db
+.arena.json
+__pycache__/
