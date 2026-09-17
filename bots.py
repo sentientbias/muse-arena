@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Muse Arena — house-bot move logic for all five games.
+"""Muse Arena — house-bot move logic for all six games.
 
 Pure functions (no DB, no network) so they can be benchmarked in-process
 and reused by the server. Each `*_move` takes the public game state plus
@@ -45,6 +45,9 @@ CHECKERS_MISTAKE_RATE = 0.03   # vs L3 0.15: L3 won 20% (n=10)
 CONNECT4_MISTAKE_RATE = 0.02   # vs L3 0.12 (proj): L3 ~8-10%
 TTT_MISTAKE_RATE = 0.08        # vs perfect L3: 5.0% @0.05, 12.0% @0.10 (n=100)
 POKER_MISTAKE_RATE = 0.06      # vs disciplined mirror: calibrating
+BATTLESHIP_MISTAKE_RATE = 0.10  # measured 2026-09-17 (n=200 each): vs random
+                              # 100.0%, vs greedy hunter 73.0%; a skilled human
+                              # (parity hunt + axis play) has a real shot
 MISTAKE_RATE = 0.05            # default for any other use
 
 
@@ -438,6 +441,95 @@ def connect4_move(state, side, time_budget=0.8, max_depth=8,
     except _Timeout:
         pass
     return best
+
+
+# ---------------------------------------------------------------------------
+# battleship — parity hunt + axis-aware target mode + mistake rate
+# ---------------------------------------------------------------------------
+
+def battleship_move(state, side, mistake_rate=BATTLESHIP_MISTAKE_RATE,
+                    rng=None):
+    """House-bot salvo. Hunt phase fires a parity pattern sized to the
+    smallest unsunk enemy ship (guarantees contact); target phase finishes
+    damaged ships along their axis. With probability `mistake_rate` it fires
+    a random legal cell instead — the human-like slip a sharp player
+    punishes. Returns {"fire": [r, c]}. Well under a millisecond."""
+    rng = rng or random
+    me, foe = str(side), str(1 - side)
+    myshots = state["fleets"][me]["shots"]
+    fired = {(s["r"], s["c"]) for s in myshots}
+    legal = [(r, c) for r in range(10) for c in range(10)
+             if (r, c) not in fired]
+    if not legal:
+        return {"fire": [0, 0]}  # unreachable: game ends on 5th sinking
+    if mistake_rate and rng.random() < mistake_rate:
+        r, c = rng.choice(legal)
+        return {"fire": [r, c]}
+    # -- target mode: unsunk hits on the board --
+    active = [(s["r"], s["c"]) for s in myshots if s["hit"] and not s["sunk"]]
+    if active:
+        # group into orthogonally-connected clusters (separate damaged ships
+        # must not be merged) and hunt the biggest cluster first
+        aset = set(active)
+        clusters, seen_c = [], set()
+        for cell in active:
+            if cell in seen_c:
+                continue
+            stack, cl = [cell], []
+            while stack:
+                cur = stack.pop()
+                if cur in seen_c:
+                    continue
+                seen_c.add(cur)
+                cl.append(cur)
+                r0, c0 = cur
+                for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    nb = (r0 + dr, c0 + dc)
+                    if nb in aset and nb not in seen_c:
+                        stack.append(nb)
+            clusters.append(cl)
+        active = max(clusters, key=len)
+        aset = set(active)
+        rows = {r for r, _ in active}
+        cols = {c for _, c in active}
+        cands = []
+        if len(rows) == 1:  # horizontal wreck: extend the axis first
+            r = next(iter(rows))
+            cs = sorted(c for _, c in active)
+            for c in (cs[0] - 1, cs[-1] + 1):
+                if 0 <= c < 10 and (r, c) not in fired:
+                    cands.append((r, c))
+        elif len(cols) == 1:  # vertical wreck
+            c = next(iter(cols))
+            rs = sorted(r for r, _ in active)
+            for r in (rs[0] - 1, rs[-1] + 1):
+                if 0 <= r < 10 and (r, c) not in fired:
+                    cands.append((r, c))
+        if not cands:  # single hit (or boxed in): orthogonal neighbours
+            for (r, c) in active:
+                for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    nr, nc = r + dr, c + dc
+                    if (0 <= nr < 10 and 0 <= nc < 10
+                            and (nr, nc) not in fired
+                            and (nr, nc) not in cands):
+                        cands.append((nr, nc))
+        if cands:
+            # prefer the cell touching the most known hits (finishes faster)
+            def _touch(cell):
+                r, c = cell
+                return sum(1 for (ar, ac) in aset
+                           if abs(ar - r) + abs(ac - c) == 1)
+            best = max(_touch(x) for x in cands)
+            pick = rng.choice([x for x in cands if _touch(x) == best])
+            return {"fire": [pick[0], pick[1]]}
+    # -- hunt mode: parity pattern for the smallest unsunk enemy ship --
+    foe_ships = state["fleets"][foe]["ships"]
+    unsunk = [s for s in foe_ships if len(s["hits"]) < s["size"]]
+    k = min([s["size"] for s in unsunk] or [2])
+    par = [cell for cell in legal if (cell[0] + cell[1]) % k == 0]
+    pool = par or legal
+    r, c = rng.choice(pool)
+    return {"fire": [r, c]}
 
 
 # ---------------------------------------------------------------------------

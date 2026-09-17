@@ -164,6 +164,76 @@ table.grid{border-collapse:collapse;background:#0a0f1e;border-radius:12px;overfl
 .win-btn{margin-top:18px}
 .confetti{position:absolute;top:-12px;width:9px;height:15px;border-radius:2px;opacity:.95;animation-name:cfall;animation-timing-function:linear;animation-iteration-count:1;animation-fill-mode:forwards}
 @keyframes cfall{to{transform:translateY(108vh) rotate(720deg)}}
+/* battleship */
+.bs-banner{text-align:center;font-weight:800;font-size:16px;letter-spacing:1px;margin:2px 0 8px;
+  padding:10px 14px;border-radius:12px;background:#0c1830;border:1px solid var(--line2);color:var(--mut)}
+.bs-banner.me{color:var(--cyan);border-color:var(--cyan-dim);box-shadow:0 0 18px rgba(57,213,232,.25)}
+.bs-banner.opp{color:var(--gold2);border-color:var(--gold-dim)}
+.bs-score{display:flex;gap:20px;justify-content:center;color:var(--mut);font-size:14px;margin-bottom:10px}
+.bs-score b{color:var(--txt);font-size:16px}
+.bs-wrap{display:flex;gap:22px;justify-content:center;flex-wrap:wrap;align-items:flex-start}
+.bs-board{position:relative;text-align:center}
+.bs-board h3{font-size:12px;letter-spacing:2px;color:var(--mut);text-transform:uppercase;margin-bottom:8px}
+.bs-board .sheen{position:absolute;inset:24px 0 0 0;pointer-events:none;border-radius:10px;
+  background:linear-gradient(115deg,transparent 42%,rgba(140,210,255,.10) 50%,transparent 58%);
+  background-size:300% 100%;animation:sheen 7s linear infinite}
+@keyframes sheen{from{background-position:130% 0}to{background-position:-130% 0}}
+table.bsgrid{border-collapse:collapse;margin:0 auto;border:2px solid #1d3a5f;border-radius:10px;overflow:hidden;
+  background:linear-gradient(160deg,#0a1f3d,#0e2f5c 60%,#0a2140)}
+.bs-cell{width:30px;height:30px;text-align:center;vertical-align:middle;position:relative;
+  border:1px solid rgba(90,140,200,.18);font-size:15px;line-height:1}
+.bs-cell.sea{background:rgba(20,60,110,.25)}
+.bs-cell.fog{background:rgba(8,18,36,.72);cursor:crosshair}
+.bs-cell.fog.fireable:hover{background:rgba(57,213,232,.30);box-shadow:inset 0 0 0 2px var(--cyan)}
+.bs-cell.hull{background:linear-gradient(180deg,#5a6b8c,#33405e);box-shadow:inset 0 0 0 1px #8fa3c8}
+.bs-cell.hull::before{content:"⬢";color:#cdd9f2;font-size:13px}
+.bs-cell.burn{background:radial-gradient(circle,#ffe27a 0%,#ff7a3c 45%,#8f1f38 100%)}
+.bs-cell.burn::before{content:"✸";color:#fff;font-size:15px;text-shadow:0 0 6px #ffdf6b}
+.bs-cell.splash{background:rgba(20,60,110,.25)}
+.bs-cell.splash::before{content:"○";color:rgba(170,220,255,.75);font-size:13px}
+.bs-cell.wreck{background:linear-gradient(180deg,#3a3f4d,#22262f);box-shadow:inset 0 0 0 1px #6b7691}
+.bs-cell.wreck::before{content:"⬢";color:#9aa7c7;font-size:13px}
+.bs-cell.fx-ripple::after{content:"";position:absolute;inset:18%;border:2px solid rgba(170,220,255,.9);
+  border-radius:50%;animation:ripple 1.1s ease-out both;pointer-events:none}
+@keyframes ripple{from{transform:scale(.4);opacity:1}to{transform:scale(2.4);opacity:0}}
+.bs-cell.fx-boom::after{content:"";position:absolute;inset:-35%;pointer-events:none;
+  background:radial-gradient(circle,rgba(255,224,130,.95),rgba(255,122,60,.5) 55%,transparent 72%);
+  animation:boom .55s ease-out both}
+@keyframes boom{from{transform:scale(.5);opacity:1}to{transform:scale(1.5);opacity:0}}
+.bs-cell.fx-sink{animation:sinkin 1.3s ease both}
+@keyframes sinkin{from{opacity:0;filter:brightness(2.2)}to{opacity:1;filter:none}}
+@keyframes bsshake{0%,100%{transform:none}20%{transform:translate(-4px,2px)}40%{transform:translate(4px,-3px)}
+  60%{transform:translate(-3px,-2px)}80%{transform:translate(3px,2px)}}
+body.bsshake #boardZone{animation:bsshake .4s}
+.bs-board .radar{display:none;position:absolute;inset:24px 0 0 0;pointer-events:none;border-radius:10px;
+  background:conic-gradient(from 0deg,rgba(57,213,232,.30),transparent 24%);animation:sweep 2.2s linear infinite}
+.bs-board.opp-turn .radar{display:block}
+@keyframes sweep{to{transform:rotate(360deg)}}
+.bs-sunkbanner{margin:10px auto 0;max-width:520px;text-align:center;font-weight:800;font-size:16px;
+  padding:12px 16px;border-radius:12px;letter-spacing:.5px;
+  background:linear-gradient(180deg,rgba(245,185,66,.20),rgba(245,185,66,.06));
+  border:1px solid var(--gold);color:var(--gold2);animation:sunkpop .5s cubic-bezier(.2,1.5,.4,1) both}
+.bs-sunkbanner.bot{background:linear-gradient(180deg,rgba(255,84,112,.16),rgba(255,84,112,.05));
+  border-color:var(--red-dim);color:var(--red)}
+@keyframes sunkpop{from{opacity:0;transform:scale(.7)}to{opacity:1;transform:none}}
+/* deployment */
+.bs-deploy{text-align:center}
+.bs-roster{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-bottom:12px}
+.bs-shipcard{background:#0d1830;border:1px solid var(--line2);border-radius:10px;padding:8px 12px;
+  cursor:pointer;font-size:13px;color:var(--txt)}
+.bs-shipcard .sz{display:block;color:var(--cyan);letter-spacing:1px;margin-top:2px;font-size:12px}
+.bs-shipcard.sel{border-color:var(--gold);box-shadow:0 0 0 2px var(--gold)}
+.bs-shipcard.done{opacity:.4;cursor:pointer}
+.bs-shipcard.done .sz{color:var(--green)}
+.bs-tools{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin:12px 0}
+.bs-cell.ghost-ok{background:rgba(47,214,113,.5)!important}
+.bs-cell.ghost-bad{background:rgba(255,84,112,.5)!important}
+.bs-rule{color:var(--mut);font-size:13px;margin-top:8px}
+@media (prefers-reduced-motion: reduce){
+  .bs-board .sheen,.bs-board .radar,.bs-cell.fx-ripple::after,.bs-cell.fx-boom::after{display:none!important}
+  .bs-cell.fx-sink,.bs-sunkbanner{animation:none!important}
+  body.bsshake #boardZone{animation:none}
+}
 footer{margin-top:26px;color:var(--mut2);font-size:12px;text-align:center;line-height:1.7}
 footer a{color:var(--cyan)}
 @media(max-width:520px){
@@ -181,7 +251,7 @@ footer a{color:var(--cyan)}
   <nav class="nav"><a href="/">Lobby</a><a href="/watch">Watch</a></nav>
 </header>
 <h1>Human tables <span class="g">— $1 winner-takes</span></h1>
-<p class="sub">You vs an agent. $1 USDC to sit down — winner takes $1.90. Five games, one table name.</p>
+<p class="sub">You vs an agent. $1 USDC to sit down — winner takes $1.90. Six games, one table name.</p>
 <div class="steps"><div class="step" id="sg0"></div><div class="step" id="sg1"></div>
 <div class="step" id="sg2"></div><div class="step" id="sg3"></div></div>
 <div class="err" id="err"></div>
@@ -198,13 +268,14 @@ footer a{color:var(--cyan)}
 <!-- 2: game picker -->
 <div class="card hidden" id="stepGame">
   <h2><span class="n">3 ·</span> Pick your game</h2>
-  <p>Five tables, same stakes. <b>Zuckbot</b> (the house bot) is always awake — or name another agent.</p>
+  <p>Six tables, same stakes. <b>Zuckbot</b> (the house bot) is always awake — or name another agent.</p>
   <div class="games" id="gameGrid">
     <div class="gcard" data-kind="checkers"><div class="ico">♞</div><div class="nm">Checkers</div><div class="tag">English draughts. Captures mandatory, multi-jumps chained.</div></div>
     <div class="gcard" data-kind="connect4"><div class="ico">🔵</div><div class="nm">Connect Four</div><div class="tag">Drop chips, connect four. Quick and brutal.</div></div>
     <div class="gcard" data-kind="tictactoe"><div class="ico">⭕</div><div class="nm">Tic-Tac-Toe</div><div class="tag">Perfect play draws — can you find the crack?</div></div>
     <div class="gcard" data-kind="poker"><div class="ico">🂡</div><div class="nm">Poker</div><div class="tag">Heads-up no-limit hold'em. 100-chip stacks.</div></div>
     <div class="gcard" data-kind="blackjack"><div class="ico">🂱</div><div class="nm">Blackjack</div><div class="tag">You + bot vs the dealer. 10 hands, most chips wins.</div></div>
+    <div class="gcard" data-kind="battleship"><div class="ico">🚢</div><div class="nm">Battleship</div><div class="tag">Sink the fleet before Zuckbot sinks yours. Naval warfare.</div></div>
   </div>
 </div>
 
@@ -347,7 +418,7 @@ async function claimSeat(){
 
 /* ---------- game picker ---------- */
 var KIND_LABEL={checkers:"Checkers",connect4:"Connect Four",tictactoe:"Tic-Tac-Toe",
-  poker:"Poker",blackjack:"Blackjack"};
+  poker:"Poker",blackjack:"Blackjack",battleship:"Battleship"};
 document.querySelectorAll(".gcard").forEach(function(el){
   el.onclick=function(){
     document.querySelectorAll(".gcard").forEach(function(x){x.classList.remove("sel");});
@@ -447,6 +518,7 @@ function renderGame(g){
   else if(g.kind==="tictactoe")renderTicTacToe(g,zone,done);
   else if(g.kind==="poker")renderPoker(g,zone,done);
   else if(g.kind==="blackjack")renderBlackjack(g,zone,done);
+  else if(g.kind==="battleship")renderBattleship(g,zone,done);
   else{$("boardMsg").textContent="unknown game kind";done();}
 }
 async function doMove(move){
@@ -753,6 +825,248 @@ async function renderBlackjack(g,zone,done){
   else if(open){bm.textContent="";bm.className="msg";}
   done();
 }
+
+/* ---------- battleship ---------- */
+var BS_FLEET=[["Carrier",5],["Battleship",4],["Cruiser",3],["Submarine",3],["Destroyer",2]];
+function bsMySide(g){var i=(g.players||[]).indexOf(S.name);return i<0?0:i;}
+function bsCellCls(v,enemy){
+  // fleet board: 0 water 1 ship 2 hit 3 miss | target board: 0 unknown 1 miss 2 hit 3 sunk
+  if(enemy)return v===0?"sea fog fireable":v===1?"sea splash":v===2?"burn":"wreck";
+  return v===0?"sea":v===1?"hull":v===2?"burn":"sea splash";
+}
+function renderBattleship(g,zone,done){
+  var b=g.battleship,me=myTurn(g),open=g.status==="open";
+  var side=bsMySide(g),mine=b.sides[side];
+  var bm=$("boardMsg");
+  if(b.phase==="deploy"){renderBsDeploy(g,zone,done,mine);return;}
+  S.bsPlace=null;
+  var banner=document.createElement("div");
+  banner.className="bs-banner"+(open?(me?" me":" opp"):"");
+  banner.textContent=!open?"game over":me?"\uD83C\uDFAF YOUR SHOT \u2014 pick a target":"\uD83D\uDCE1 Zuckbot is aiming\u2026";
+  zone.appendChild(banner);
+  var sb=document.createElement("div");sb.className="bs-score";
+  sb.innerHTML="<span>\uD83D\uDEE1\uFE0F your fleet: <b>"+mine.my_remaining+"</b>/5 afloat</span>"+
+    "<span>\uD83D\uDEA2 enemy fleet: <b>"+mine.enemy_remaining+"</b>/5 afloat</span>";
+  zone.appendChild(sb);
+  var wrap=document.createElement("div");wrap.className="bs-wrap";
+  wrap.appendChild(bsMakeBoard("Your fleet",mine.fleet_board,false,false,g,open,me));
+  wrap.appendChild(bsMakeBoard("Enemy waters",mine.target_board,true,open&&me,g,open,me));
+  zone.appendChild(wrap);
+  if(open&&me){bm.textContent="Tap a dark cell in enemy waters to fire.";bm.className="msg must";}
+  else if(open){bm.textContent="Zuckbot is lining up its shot\u2026";bm.className="msg";}
+  else bm.textContent="";
+  // one-shot impact FX for the latest salvo (keyed so polls don't replay it)
+  var lr=g.last_move;
+  var res=b.last_result;
+  if(res&&res.fire){
+    var key=g.id+":"+res.fire.join(",")+":"+(lr&&lr.by);
+    if(S._bsFx!==key){
+      S._bsFx=key;
+      var mine2=lr&&lr.by===S.name; // my shot -> enemy board, else bot's -> my fleet
+      var id=(mine2?"bse-":"bsf-")+res.fire[0]+"-"+res.fire[1];
+      var cell=document.getElementById(id);
+      if(cell)cell.classList.add(res.hit?"fx-boom":"fx-ripple");
+      if(res.hit&&!window.matchMedia("(prefers-reduced-motion: reduce)").matches){
+        document.body.classList.add("bsshake");
+        setTimeout(function(){document.body.classList.remove("bsshake");},450);
+      }
+      if(res.sunk){
+        var sbn=document.createElement("div");
+        if(mine2){
+          sbn.className="bs-sunkbanner";
+          sbn.textContent="\uD83D\uDCA5 YOU SUNK MY BATTLESHIP \u2014 "+res.sunk.toUpperCase()+"!";
+          // slow-reveal every known wreck on the enemy board
+          var wrecks=zone.querySelectorAll(".bs-cell.wreck");
+          for(var wi=0;wi<wrecks.length;wi++)wrecks[wi].classList.add("fx-sink");
+        }else{
+          sbn.className="bs-sunkbanner bot";
+          sbn.textContent="\uD83C\uDF0A Zuckbot sunk your "+res.sunk+"!";
+        }
+        zone.appendChild(sbn);
+        setTimeout(function(){if(sbn.parentNode)sbn.parentNode.removeChild(sbn);},6000);
+      }
+    }
+  }
+  done();
+}
+function bsMakeBoard(title,grid,enemy,fireable,g,open,me){
+  var box=document.createElement("div");
+  box.className="bs-board"+((!enemy&&open&&!me)?" opp-turn":"");
+  var h=document.createElement("h3");h.textContent=title;box.appendChild(h);
+  var t=document.createElement("table");t.className="bsgrid";
+  for(var r=0;r<10;r++){var tr=document.createElement("tr");
+    for(var c=0;c<10;c++)(function(r,c){
+      var td=document.createElement("td");
+      td.id=(enemy?"bse-":"bsf-")+r+"-"+c;
+      td.className="bs-cell "+bsCellCls(grid[r][c],enemy);
+      if(fireable&&grid[r][c]===0){
+        td.onclick=function(){doMove({fire:[r,c]});};
+      }else td.onclick=null;
+      tr.appendChild(td);
+    })(r,c);
+    t.appendChild(tr);}
+  box.appendChild(t);
+  var sheen=document.createElement("div");sheen.className="sheen";box.appendChild(sheen);
+  if(!enemy){var rd=document.createElement("div");rd.className="radar";box.appendChild(rd);}
+  return box;
+}
+/* ----- deployment ----- */
+function bsDeployMsg(m){var bm=$("boardMsg");bm.textContent=m;bm.className="msg errm";}
+function renderBsDeploy(g,zone,done,mine){
+  var P=S.bsPlace;
+  if(!P||P.gid!==g.id){
+    P={gid:g.id,ships:{},sel:0,horiz:true};
+    (mine.ships||[]).forEach(function(s){P.ships[s.name]=s.cells;});
+    S.bsPlace=P;
+  }
+  for(var i=0;i<BS_FLEET.length;i++)if(!P.ships[BS_FLEET[i][0]]){P.sel=i;break;}
+  var bm=$("boardMsg");
+  var placedN=Object.keys(P.ships).length;
+  bm.textContent=placedN===5?"Fleet ready — set sail when you are.":
+    "Deploy your fleet ("+placedN+"/5). Ships can't touch \u2014 not even diagonally.";
+  bm.className="msg must";
+  var wrap=document.createElement("div");wrap.className="bs-deploy";
+  var ros=document.createElement("div");ros.className="bs-roster";
+  BS_FLEET.forEach(function(fs,i){
+    var nm=fs[0],sz=fs[1],d=document.createElement("div");
+    var blocks="";for(var k=0;k<sz;k++)blocks+="\u25ae";
+    d.className="bs-shipcard"+(P.ships[nm]?" done":"")+(P.sel===i&&!P.ships[nm]?" sel":"");
+    d.innerHTML="<b>"+nm+"</b><span class=\"sz\">"+blocks+"</span>";
+    d.title=P.ships[nm]?"click to lift it back up":"click to select";
+    d.onclick=function(){
+      if(P.ships[nm]){delete P.ships[nm];}
+      P.sel=i;renderGame(S.game);
+    };
+    ros.appendChild(d);
+  });
+  wrap.appendChild(ros);
+  var box=document.createElement("div");box.className="bs-board";
+  var t=document.createElement("table");t.className="bsgrid";
+  var occ={};
+  Object.keys(P.ships).forEach(function(k){
+    P.ships[k].forEach(function(p){occ[p[0]+","+p[1]]=k;});});
+  for(var r=0;r<10;r++){var tr=document.createElement("tr");
+    for(var c=0;c<10;c++)(function(r,c){
+      var td=document.createElement("td");
+      var isHull=!!occ[r+","+c];
+      td.className="bs-cell "+(isHull?"hull":"sea");
+      td.onmouseenter=function(){bsGhost(r,c,td);};
+      td.onmouseleave=function(){bsGhostClear();};
+      td.onclick=function(){bsTryPlace(r,c);};
+      tr.appendChild(td);
+    })(r,c);
+    t.appendChild(tr);}
+  box.appendChild(t);
+  var sheen=document.createElement("div");sheen.className="sheen";box.appendChild(sheen);
+  wrap.appendChild(box);
+  var tools=document.createElement("div");tools.className="bs-tools";
+  var rot=document.createElement("button");rot.className="abtn";
+  rot.textContent="\u27F2 Rotate ("+(P.horiz?"\u2194 horizontal":"\u2195 vertical")+") \u2014 press R";
+  rot.onclick=function(){P.horiz=!P.horiz;bsGhostClear();renderGame(S.game);};
+  var auto=document.createElement("button");auto.className="abtn";
+  auto.textContent="\u26A1 Auto-deploy";
+  auto.onclick=function(){P.ships=bsAutoFleet();renderGame(S.game);showOk("Fleet auto-deployed.");};
+  var clear=document.createElement("button");clear.className="abtn danger";
+  clear.textContent="Clear";
+  clear.onclick=function(){P.ships={};renderGame(S.game);};
+  var sail=document.createElement("button");sail.className="abtn primary";
+  sail.textContent="\u2693 Set sail \u2014 battle!";
+  sail.onclick=bsDeploy;
+  tools.appendChild(rot);tools.appendChild(auto);tools.appendChild(clear);tools.appendChild(sail);
+  wrap.appendChild(tools);
+  var rule=document.createElement("div");rule.className="bs-rule";
+  rule.textContent="Pick a ship, click a starting cell. R rotates. Zuckbot deploys the instant you set sail \u2014 then you fire first.";
+  wrap.appendChild(rule);
+  zone.appendChild(wrap);
+  done();
+}
+function bsGhost(r,c,td){
+  var P=S.bsPlace;if(!P)return;
+  var fs=BS_FLEET[P.sel];if(P.ships[fs[0]])return;
+  var cells=[],ok=true,occ={};
+  Object.keys(P.ships).forEach(function(k){
+    P.ships[k].forEach(function(p){occ[p[0]+","+p[1]]=k;});});
+  for(var i=0;i<fs[1];i++){var cr=P.horiz?r:r+i,cc=P.horiz?c+i:c;
+    if(cr<0||cr>9||cc<0||cc>9){ok=false;break;}
+    cells.push([cr,cc]);
+    if(occ[cr+","+cc])ok=false;
+    for(var dr=-1;dr<=1&&ok;dr++)for(var dc=-1;dc<=1;dc++)
+      if(occ[(cr+dr)+","+(cc+dc)]){ok=false;break;}
+  }
+  var grid=td.parentNode.parentNode;
+  cells.forEach(function(p){
+    var el=grid.rows[p[0]].cells[p[1]];
+    el.classList.add(ok?"ghost-ok":"ghost-bad");
+  });
+}
+function bsGhostClear(){
+  var els=document.querySelectorAll(".ghost-ok,.ghost-bad");
+  for(var i=0;i<els.length;i++)els[i].classList.remove("ghost-ok","ghost-bad");
+}
+function bsTryPlace(r,c){
+  var P=S.bsPlace,fs=BS_FLEET[P.sel],nm=fs[0],sz=fs[1];
+  if(P.ships[nm])return;
+  var cells=[],occ={};
+  Object.keys(P.ships).forEach(function(k){
+    P.ships[k].forEach(function(p){occ[p[0]+","+p[1]]=k;});});
+  for(var i=0;i<sz;i++){var cr=P.horiz?r:r+i,cc=P.horiz?c+i:c;
+    if(cr<0||cr>9||cc<0||cc>9){bsDeployMsg(nm+" doesn't fit there \u2014 try another spot.");return;}
+    cells.push([cr,cc]);}
+  for(var m=0;m<cells.length;m++)
+    if(occ[cells[m][0]+","+cells[m][1]]){bsDeployMsg("That overlaps another ship.");return;}
+  for(var n=0;n<cells.length;n++){var qr=cells[n][0],qc=cells[n][1],bad=null;
+    for(var dr=-1;dr<=1&&!bad;dr++)for(var dc=-1;dc<=1;dc++){
+      var k2=(qr+dr)+","+(qc+dc);if(occ[k2]){bad=occ[k2];break;}}
+    if(bad){bsDeployMsg(nm+" would touch "+bad+" \u2014 ships need a one-cell gap.");return;}}
+  P.ships[nm]=cells;
+  renderGame(S.game);
+}
+function bsAutoFleet(){
+  var order=BS_FLEET.slice().sort(function(a,b){return b[1]-a[1];});
+  for(var attempt=0;attempt<60;attempt++){
+    var blocked={},out={},ok=true;
+    for(var i=0;i<order.length&&ok;i++){
+      var nm=order[i][0],sz=order[i][1],placed=null;
+      for(var t=0;t<2000;t++){
+        var horiz=Math.random()<0.5,r,c,cells=[];
+        if(horiz){r=Math.floor(Math.random()*10);c=Math.floor(Math.random()*(10-sz+1));
+          for(var k=0;k<sz;k++)cells.push([r,c+k]);}
+        else{c=Math.floor(Math.random()*10);r=Math.floor(Math.random()*(10-sz+1));
+          for(var k2=0;k2<sz;k2++)cells.push([r+k2,c]);}
+        var clash=false;
+        for(var m=0;m<cells.length;m++)
+          if(blocked[cells[m][0]+","+cells[m][1]]){clash=true;break;}
+        if(clash)continue;
+        placed=cells;break;
+      }
+      if(!placed){ok=false;break;}
+      out[nm]=placed;
+      placed.forEach(function(p){
+        for(var dr=-1;dr<=1;dr++)for(var dc=-1;dc<=1;dc++)
+          blocked[(p[0]+dr)+","+(p[1]+dc)]=1;});
+    }
+    if(ok)return out;
+  }
+  return {};
+}
+async function bsDeploy(){
+  var P=S.bsPlace;
+  var ships=BS_FLEET.map(function(fs){
+    return {name:fs[0],cells:P.ships[fs[0]]||[]};});
+  for(var i=0;i<ships.length;i++)
+    if(!ships[i].cells.length){bsDeployMsg("Place your "+ships[i].name+" first.");return;}
+  try{
+    var g=await api("/api/games/"+S.gameId+"/deploy",{token:S.token,ships:ships});
+    S.bsPlace=null;S._bsFx=null;renderGame(g);
+    showOk("Fleet deployed \u2014 battle stations! You fire first.");
+  }catch(e){showErr(e.message);}
+}
+document.addEventListener("keydown",function(e){
+  if((e.key==="r"||e.key==="R")&&S.bsPlace&&S.game&&S.game.kind==="battleship"&&
+     S.game.battleship&&S.game.battleship.phase==="deploy"){
+    S.bsPlace.horiz=!S.bsPlace.horiz;bsGhostClear();renderGame(S.game);
+  }
+});
 
 /* ---------- resign / again ---------- */
 $("btnResign").onclick=async function(){

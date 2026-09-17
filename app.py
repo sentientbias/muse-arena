@@ -259,7 +259,8 @@ CREATE TABLE IF NOT EXISTS tournament (
 # Pure functions: board in, moves/new-board out. No DB, no I/O.
 # Sides: side 0 = players[0] (the challenger, moves first), side 1 = players[1].
 
-BOARD_KINDS = ("checkers", "connect4", "tictactoe", "poker", "blackjack")
+BOARD_KINDS = ("checkers", "connect4", "tictactoe", "poker", "blackjack",
+               "battleship")
 CARD_KINDS = ("poker", "blackjack")
 # v2.8 — humans vs agents (checkers). Humans are players rows with
 # is_human=1, identified by wallet. The house bot ("Zuckbot") is the
@@ -519,6 +520,218 @@ def chk_bot_move(board, side, max_depth=4, time_budget=2.0, chain=None):
     except _ChkTimeout:
         pass
     return best
+
+# ---------------------------------------------------------------------------
+# v2.9 — battleship. Human vs house bot, standard fleet, no-touch placement
+# (ships may not touch, even diagonally — the classic rule).
+# state: {"phase": "deploy"|"battle",
+#         "fleets": {"0": {"ships": [...], "shots": [...]},
+#                    "1": {"ships": [...], "shots": [...]}},
+#         "last_result": {...}|None}
+# ship: {"name", "size", "cells": [[r,c],..], "hits": [[r,c],..]}
+# shot: {"r", "c", "hit": bool, "sunk": name|None}
+# ---------------------------------------------------------------------------
+
+BS_FLEET = (("Carrier", 5), ("Battleship", 4), ("Cruiser", 3),
+            ("Submarine", 3), ("Destroyer", 2))
+BS_SIZE = 10
+
+
+def bs_new():
+    return {"phase": "deploy",
+            "fleets": {"0": {"ships": [], "shots": []},
+                       "1": {"ships": [], "shots": []}},
+            "last_result": None}
+
+
+def bs_validate_fleet(ships):
+    """Validate a full 5-ship placement. Returns canonical ship dicts.
+    Raises ApiError(400) with a human-readable reason on any violation."""
+    if not isinstance(ships, list) or len(ships) != len(BS_FLEET):
+        raise ApiError(400, "fleet must have exactly %d ships "
+                            "(Carrier 5, Battleship 4, Cruiser 3, "
+                            "Submarine 3, Destroyer 2)" % len(BS_FLEET))
+    spec = {n: s for n, s in BS_FLEET}
+    seen = {}
+    occupied = {}  # (r, c) -> ship name
+    for entry in ships:
+        if not isinstance(entry, dict):
+            raise ApiError(400, "each ship needs {name, cells}")
+        name, cells = entry.get("name"), entry.get("cells")
+        if name not in spec:
+            raise ApiError(400, "unknown ship %r — fleet is %s"
+                                % (name, ", ".join(spec)))
+        if name in seen:
+            raise ApiError(400, "duplicate ship: %s" % name)
+        size = spec[name]
+        if not isinstance(cells, list) or len(cells) != size:
+            raise ApiError(400, "%s needs exactly %d cells" % (name, size))
+        pts = []
+        for p in cells:
+            try:
+                r, c = int(p[0]), int(p[1])
+            except (TypeError, ValueError, IndexError):
+                raise ApiError(400, "%s has a bad cell: %r" % (name, p))
+            if not (0 <= r < BS_SIZE and 0 <= c < BS_SIZE):
+                raise ApiError(400, "%s goes off the 10x10 grid" % name)
+            pts.append((r, c))
+        if len(set(pts)) != size:
+            raise ApiError(400, "%s has duplicate cells" % name)
+        rs = {r for r, _ in pts}
+        cs = {c for _, c in pts}
+        if len(rs) != 1 and len(cs) != 1:
+            raise ApiError(400, "%s must sit in a straight line" % name)
+        if len(rs) == 1:
+            r0 = next(iter(rs))
+            exp = sorted((r0, c) for c in range(min(cs), min(cs) + size))
+        else:
+            c0 = next(iter(cs))
+            exp = sorted((r, c0) for r in range(min(rs), min(rs) + size))
+        if sorted(pts) != exp:
+            raise ApiError(400, "%s's cells must be contiguous" % name)
+        for p in pts:
+            if p in occupied:
+                raise ApiError(400, "%s overlaps %s" % (name, occupied[p]))
+        for (r, c) in pts:
+            for dr in (-1, 0, 1):
+                for dc in (-1, 0, 1):
+                    nb = (r + dr, c + dc)
+                    if nb in occupied:
+                        raise ApiError(400, "%s touches %s — ships need a "
+                                            "one-cell gap all around"
+                                        % (name, occupied[nb]))
+        for p in pts:
+            occupied[p] = name
+        seen[name] = sorted([list(p) for p in pts])
+    return [{"name": n, "size": s, "cells": seen[n], "hits": []}
+            for n, s in BS_FLEET]
+
+
+def bs_random_fleet(rng=None):
+    """Random legal fleet (no-touch). Used for the house bot's deployment."""
+    import random as _random
+    rng = rng or _random
+    blocked = set()  # occupied cells + their 8-neighbourhoods
+    out = []
+    for name, size in BS_FLEET:
+        for _ in range(2000):
+            if rng.random() < 0.5:
+                r, c = rng.randrange(BS_SIZE), rng.randrange(BS_SIZE - size + 1)
+                cells = [(r, c + i) for i in range(size)]
+            else:
+                r, c = rng.randrange(BS_SIZE - size + 1), rng.randrange(BS_SIZE)
+                cells = [(r + i, c) for i in range(size)]
+            if any(p in blocked for p in cells):
+                continue
+            out.append({"name": name,
+                        "cells": [[r, c] for r, c in cells]})
+            for (r, c) in cells:
+                for dr in (-1, 0, 1):
+                    for dc in (-1, 0, 1):
+                        blocked.add((r + dr, c + dc))
+            break
+        else:
+            return bs_random_fleet(rng)  # vanishingly rare; restart clean
+    return bs_validate_fleet(out)
+
+
+def bs_legal(state, side):
+    """All unfired cells on the enemy grid, as {"fire": [r, c]} moves."""
+    if state.get("phase") != "battle":
+        return []
+    fired = {(s["r"], s["c"]) for s in state["fleets"][str(side)]["shots"]}
+    return [{"fire": [r, c]} for r in range(BS_SIZE) for c in range(BS_SIZE)
+            if (r, c) not in fired]
+
+
+def bs_apply(state, side, move):
+    """Apply {"fire": [r, c]}. Returns (new_state, result dict)."""
+    me, foe = str(side), str(1 - side)
+    r, c = move["fire"]
+    fleets = {}
+    for k, v in state["fleets"].items():
+        fleets[k] = {
+            "ships": [{"name": s["name"], "size": s["size"],
+                       "cells": [list(p) for p in s["cells"]],
+                       "hits": [list(p) for p in s["hits"]]}
+                      for s in v["ships"]],
+            "shots": [dict(s) for s in v["shots"]]}
+    hit_ship = None
+    for s in fleets[foe]["ships"]:
+        if [r, c] in s["cells"]:
+            hit_ship = s
+            break
+    hit = hit_ship is not None
+    sunk = None
+    if hit:
+        if [r, c] not in hit_ship["hits"]:
+            hit_ship["hits"].append([r, c])
+        if len(hit_ship["hits"]) >= hit_ship["size"]:
+            sunk = hit_ship["name"]
+            # label every earlier hit on this ship so target-mode bots and
+            # the frontend see the full sunk silhouette, not just the kill shot
+            for p in hit_ship["cells"]:
+                for sh in fleets[me]["shots"]:
+                    if sh["hit"] and sh["r"] == p[0] and sh["c"] == p[1]:
+                        sh["sunk"] = sunk
+    fleets[me]["shots"].append({"r": r, "c": c, "hit": hit, "sunk": sunk})
+    won = all(len(s["hits"]) >= s["size"] for s in fleets[foe]["ships"])
+    result = {"fire": [r, c], "hit": hit, "sunk": sunk, "won": won,
+              "enemy_left": sum(1 for s in fleets[foe]["ships"]
+                                if len(s["hits"]) < s["size"])}
+    return ({"phase": "battle", "fleets": fleets, "last_result": result},
+            result)
+
+
+def bs_public(state, viewer_side):
+    """Fog-of-war public view. viewer_side is 0, 1, or None (spectator):
+    only the viewer's own ship positions are revealed; everyone sees shot
+    markers, and sunk ships are revealed on the target board."""
+    fleet_spec = [{"name": n, "size": s} for n, s in BS_FLEET]
+    sides = []
+    for side in (0, 1):
+        k = str(side)
+        full = (viewer_side == side)
+        f = state["fleets"][k]
+        foe_shots = state["fleets"][str(1 - side)]["shots"]
+        board = None
+        if full:
+            board = [[0] * BS_SIZE for _ in range(BS_SIZE)]  # 0 water 1 ship 2 hit 3 miss
+            for s in f["ships"]:
+                for p in s["cells"]:
+                    board[p[0]][p[1]] = 1
+                for p in s["hits"]:
+                    board[p[0]][p[1]] = 2
+            for sh in foe_shots:
+                r, c = sh["r"], sh["c"]
+                board[r][c] = 2 if sh["hit"] else 3
+        tboard = [[0] * BS_SIZE for _ in range(BS_SIZE)]  # 0 unknown 1 miss 2 hit 3 sunk
+        for sh in f["shots"]:
+            r, c = sh["r"], sh["c"]
+            tboard[r][c] = 3 if sh["sunk"] else (2 if sh["hit"] else 1)
+        sides.append({
+            "fleet_board": board,  # None unless viewer owns this side: no leaks
+            "ships": f["ships"] if full else [],
+            "deployed": bool(f["ships"]),
+            "target_board": tboard,
+            "shots_fired": len(f["shots"]),
+            "my_sunk": sorted({sh["sunk"] for sh in foe_shots if sh["sunk"]}),
+            "enemy_sunk": sorted({sh["sunk"] for sh in f["shots"] if sh["sunk"]}),
+            "my_remaining": sum(1 for s in f["ships"]
+                                if len(s["hits"]) < s["size"]),
+            "enemy_remaining": sum(1 for s in state["fleets"][str(1 - side)]["ships"]
+                                   if len(s["hits"]) < s["size"]),
+        })
+    return {"phase": state.get("phase"), "fleet": fleet_spec,
+            "sides": sides, "last_result": state.get("last_result")}
+
+
+def bs_text(state):
+    foe = lambda side: sum(1 for s in state["fleets"][str(1 - side)]["ships"]
+                           if len(s["hits"]) < s["size"])
+    return ("battleship %s — side 0 has %d enemy ships left, "
+            "side 1 has %d enemy ships left"
+            % (state.get("phase"), foe(0), foe(1)))
 
 # ---------------------------------------------------------------------------
 # v2.0 — cards. Pure helpers shared by poker + blackjack. Card strings are
@@ -972,7 +1185,7 @@ class Arena:
                             " ORDER BY created_at DESC", (room_id, kind)):
             if human["id"] in json.loads(g["players_json"]):
                 if not s:
-                    return self.board_game_state(g["id"])
+                    return self.board_game_state(g["id"], human["id"])
                 raise ApiError(409, "you already have an open %s game — finish it"
                                     " or resign before challenging someone new" % kind)
         if not s:
@@ -1004,7 +1217,7 @@ class Arena:
                 self.house_bot_reply(g["id"])
             except ApiError:
                 pass
-        return self.board_game_state(g["id"])
+        return self.board_game_state(g["id"], human["id"])
 
     def human_challenges(self):
         """Open human-vs-agent games, all kinds (for agents to discover)."""
@@ -1154,6 +1367,9 @@ class Arena:
                 legal = self._bj_legal(state, side)
                 move = _bots.blackjack_move(state["hands"][side],
                                             state["dealer_up"], legal)
+            elif kind == "battleship":
+                if state.get("phase") == "battle":
+                    move = _bots.battleship_move(state, side)
             if not move:
                 break
             moved = self.make_move(bot, game_id, move)
@@ -2214,12 +2430,14 @@ class Arena:
         kind = (kind or "").lower()
         if kind not in BOARD_KINDS:
             raise ApiError(400, "kind must be one of: checkers, connect4,"
-                                " tictactoe, poker, blackjack")
+                                " tictactoe, poker, blackjack, battleship")
         opp = self._resolve_opponent(room_id, player, opponent)
         if kind == "poker":
             state = self._poker_new()
         elif kind == "blackjack":
             state = self._bj_new()
+        elif kind == "battleship":
+            state = bs_new()
         else:
             state = {"checkers": chk_new, "connect4": c4_new,
                      "tictactoe": ttt_new}[kind]()
@@ -2241,7 +2459,7 @@ class Arena:
                     " turn_deadline=? WHERE id=?",
                     (json.dumps(state), outcome["next_pid"],
                      now() + MOVE_CLOCK_SECONDS, gid))
-        return self.board_game_state(gid)
+        return self.board_game_state(gid, player["id"])
 
     def _board_row(self, game_id):
         g = self._row("SELECT * FROM board_games WHERE id=?", (game_id,))
@@ -2287,7 +2505,7 @@ class Arena:
                                 players, winner_id, False, "timeout")
         return True, self._player_name(winner_id), self._player_name(idle_id)
 
-    def board_game_state(self, game_id):
+    def board_game_state(self, game_id, viewer_pid=None):
         g = self._board_row(game_id)
         forfeit = None
         if g["status"] == "open":
@@ -2380,6 +2598,14 @@ class Arena:
             d["board_text"] = ("blackjack hand %d/%d — %s"
                                % (state["hand_no"], state["hands_total"],
                                   state["last_action"]))
+        elif kind == "battleship":
+            viewer_side = (players.index(viewer_pid)
+                           if viewer_pid in players else None)
+            d["battleship"] = bs_public(state, viewer_side)
+            tside = players.index(g["turn_pid"]) if open_ else 0
+            d["legal_moves"] = bs_legal(state, tside) if open_ else []
+            d["sides"] = {names[0]: "your fleet (left)", names[1]: "enemy waters"}
+            d["board_text"] = bs_text(state)
         else:  # tictactoe
             legal = ttt_legal(state) if open_ else []
             d["board"] = state["board"]
@@ -2780,7 +3006,7 @@ class Arena:
                 state, outcome = self._bj_move(game_id, state, players,
                                                side, player, move)
             self._commit_card_outcome(game_id, state, outcome)
-            d = self.board_game_state(game_id)
+            d = self.board_game_state(game_id, player["id"])
             d["moved"] = True
             d["game_over"] = outcome["over"]
             d["draw"] = outcome["draw"]
@@ -2814,6 +3040,22 @@ class Arena:
             winner_side = c4_winner(state)
             if winner_side is None and not c4_legal(state):
                 draw = True
+        elif kind == "battleship":
+            if state.get("phase") != "battle":
+                raise ApiError(400, "deploy your fleet first — the battle "
+                                    "hasn't started")
+            legal = bs_legal(state, side)
+            try:
+                m = {"fire": [int(move["fire"][0]), int(move["fire"][1])]}
+            except (KeyError, TypeError, ValueError, IndexError):
+                raise ApiError(400, 'move must look like {"fire": [4, 7]} '
+                                    '(row, col 0-9)')
+            if m not in legal:
+                raise ApiError(400, "illegal shot — already fired there or "
+                                    "off the grid")
+            state, _bs_result = bs_apply(state, side, m)
+            if _bs_result["won"]:
+                winner_side = side
         else:  # checkers
             chain = state.get("chain")
             legal = chk_legal_moves(state["board"], side,
@@ -2866,7 +3108,7 @@ class Arena:
                     (json.dumps(_st), game_id))
         except Exception:
             pass
-        d = self.board_game_state(game_id)
+        d = self.board_game_state(game_id, player["id"])
         d["moved"] = True
         d["game_over"] = over
         d["draw"] = draw
@@ -2879,6 +3121,37 @@ class Arena:
             d["result"] = "next turn: %s" % d["turn"]
         self._idem_store(game_id, idempotency_key, d)
         return d
+
+    def deploy_fleet(self, player, game_id, ships):
+        """Battleship setup: a player submits their full 5-ship fleet.
+        When the human deploys vs the house bot, the bot deploys instantly
+        (random legal fleet) and the battle phase begins, human firing first.
+        Deployment is setup, not a move — no stake required to place ships."""
+        g = self._board_row(game_id)
+        if g["status"] != "open":
+            raise ApiError(400, "game is over")
+        if g["kind"] != "battleship":
+            raise ApiError(400, "deployment is only for battleship games")
+        players = json.loads(g["players_json"])
+        if player["id"] not in players:
+            raise ApiError(403, "you're not a player in this game")
+        side = players.index(player["id"])
+        state = json.loads(g["state_json"])
+        if state.get("phase") != "deploy":
+            raise ApiError(400, "fleets are already deployed — battle on")
+        me = str(side)
+        if state["fleets"][me]["ships"]:
+            raise ApiError(400, "your fleet is already deployed")
+        state["fleets"][me]["ships"] = bs_validate_fleet(ships)
+        foe = str(1 - side)
+        if not state["fleets"][foe]["ships"]:
+            if players[1 - side] == self._house_bot()["id"]:
+                state["fleets"][foe]["ships"] = bs_random_fleet()
+        if state["fleets"]["0"]["ships"] and state["fleets"]["1"]["ships"]:
+            state["phase"] = "battle"
+        self._q("UPDATE board_games SET state_json=? WHERE id=?",
+                (json.dumps(state), game_id))
+        return self.board_game_state(game_id, player["id"])
 
     def resign_game(self, player, game_id):
         g = self._board_row(game_id)
@@ -3447,6 +3720,19 @@ border-radius:12px;display:flex;align-items:center;justify-content:center;font-s
 box-shadow:0 14px 28px rgba(0,0,0,.5)}
 .pv-cell.x{color:#22d3ee;text-shadow:0 0 18px rgba(34,211,238,.7)}
 .pv-cell.o{color:#f472b6;text-shadow:0 0 18px rgba(244,114,182,.7)}
+.pv-sea{display:grid;grid-template-columns:repeat(10,24px);gap:3px;padding:12px;border-radius:14px;
+background:linear-gradient(160deg,#0a1f3d,#0e2f5c 60%,#0a2140);
+box-shadow:0 30px 60px rgba(0,0,0,.6),inset 0 0 0 3px #1d3a5f}
+.pv-sea.pv-mini{grid-template-columns:repeat(10,14px);gap:2px;padding:8px}
+.pv-dot{width:24px;height:24px;border-radius:6px;background:rgba(90,140,200,.16)}
+.pv-mini .pv-dot{width:14px;height:14px;border-radius:4px}
+.pv-dot.ship{background:linear-gradient(180deg,#5a6b8c,#33405e);box-shadow:inset 0 0 0 1px #8fa3c8}
+.pv-dot.miss{background:rgba(170,220,255,.5);border-radius:50%}
+.pv-dot.hit{background:radial-gradient(circle,#ffe27a 0%,#ff7a3c 55%,#8f1f38);box-shadow:0 0 10px rgba(255,122,60,.8)}
+.pv-dot.sunk{background:linear-gradient(180deg,#3a3f4d,#22262f);box-shadow:inset 0 0 0 1px #9aa7c7}
+.pv-sea.pv-duo{display:flex;gap:14px;background:none;box-shadow:none;padding:0;justify-content:center}
+.pv-sea-wrap{text-align:center}
+.pv-cap{margin-top:6px;font-size:.72rem;color:#93a0bd;letter-spacing:.08em}
 @media (prefers-reduced-motion:reduce){
 .card.game.focused,.brender .ttt,.brender .c4,.brender .chk,.seat.active .plaque,.card.live .cardtable,
 .entry-hero,.entry-icon,.pv-tilt{animation:none}}
@@ -3496,10 +3782,10 @@ function timeAgo(t){var d=Math.floor(Date.now()/1000)-t;
   return Math.floor(d/3600)+"h ago";}
 function kindIcon(k){
   return k==="checkers"?"♞":k==="connect4"?"🔵":k==="tictactoe"?"⭕":
-         k==="poker"?"🂡":k==="blackjack"?"🂱":"🎲";}
+         k==="poker"?"🂡":k==="blackjack"?"🂱":k==="battleship"?"🚢":"🎲";}
 function kindName(k){
   return k==="checkers"?"Checkers":k==="connect4"?"Connect Four":k==="tictactoe"?"Tic-Tac-Toe":
-         k==="poker"?"Poker":k==="blackjack"?"Blackjack":String(k);}
+         k==="poker"?"Poker":k==="blackjack"?"Blackjack":k==="battleship"?"Battleship":String(k);}
 function pill(g){
   var h='<span class="pill'+(g.status==="finished"?" fin":"")+'">'+esc(g.status)+"</span>";
   if(g.status!=="finished")h+='<span class="live-tag"><i></i>live</span>';
@@ -3612,7 +3898,7 @@ function reasonLabel(r){
     bust:"bust-out",chips:"chip lead",draw:"draw",win:"win"}[r]||r;}
 var seenFp={};
 var focusGid=null,focusKind=null,entryKind=null;
-var GAME_KINDS=["checkers","connect4","tictactoe","poker","blackjack"];
+var GAME_KINDS=["checkers","connect4","tictactoe","poker","blackjack","battleship"];
 function readHash(){
   focusGid=null;focusKind=null;entryKind=null;
   var h=(location.hash||"").replace(/^#/,""),m;
@@ -3636,7 +3922,10 @@ var GAME_INFO={
   format:"100 chips · rising blinds · 60-hand cap",stakes:"$1 per match · winner takes $1.90"},
  blackjack:{tag:"Tournament vs the dealer.",
   blurb:"Chip leader takes the table.",
-  format:"10 hands · 10 chips each · 3:2 on naturals",stakes:"$1 per match · winner takes $1.90"}};
+  format:"10 hands · 10 chips each · 3:2 on naturals",stakes:"$1 per match · winner takes $1.90"},
+ battleship:{tag:"Naval warfare — sink the fleet.",
+  blurb:"Deploy five ships, then hunt. First to sink them all takes the sea.",
+  format:"Head-to-head · 10×10 · no-touch fleets",stakes:"$1 per match · winner takes $1.90"}};
 function previewHTML(kind){
   if(kind==="poker")return '<div class="pv-stage"><div class="pv-tilt"><div class="pv-felt">'+
    '<div class="pv-pcard pv-c1"><b>A</b><span>♠</span></div>'+
@@ -3647,6 +3936,14 @@ function previewHTML(kind){
    '<div class="pv-pcard pv-c1"><b>10</b><span>♣</span></div>'+
    '<div class="pv-pcard pv-c2 red"><b>A</b><span>♥</span></div>'+
    '<div class="pv-total">BLACKJACK PAYS 3:2</div></div></div></div>';
+  if(kind==="battleship"){
+   var cells={ "2,3":"ship","2,4":"ship","2,5":"ship","5,1":"hit","5,2":"hit",
+    "5,3":"ship","7,6":"miss","4,7":"hit","8,2":"miss","1,8":"miss","6,6":"sunk","6,7":"sunk"};
+   var h='<div class="pv-stage"><div class="pv-tilt"><div class="pv-sea">';
+   for(var r=0;r<10;r++)for(var c=0;c<10;c++){
+    var v=cells[c+","+r]||"";
+    h+='<div class="pv-dot '+v+'"></div>';}
+   return h+'</div></div></div>';}
   if(kind==="checkers"){
    var light=[[1,0],[3,0],[5,0],[7,0],[0,1],[2,1],[4,1],[6,1]];
    var dark=[[1,6],[3,6],[5,6],[7,6],[0,7],[2,7],[4,7],[6,7]];
@@ -3690,9 +3987,25 @@ function fpOf(g){
     g.poker.hand_no+"|"+g.poker.street+"|"+JSON.stringify(g.poker.stacks);
   else if(g.kind==="blackjack"&&g.blackjack)b=JSON.stringify(g.blackjack.player_hands)+"|"+
     JSON.stringify(g.blackjack.dealer_hand)+"|"+g.blackjack.hand_no;
+  else if(g.kind==="battleship"&&g.battleship)b=g.battleship.phase+"|"+
+    g.battleship.sides.map(function(sd){return JSON.stringify(sd.target_board);}).join("|");
   else b=g.board;
   var lm=(g.last_move&&g.last_move.move)?JSON.stringify(g.last_move.move):"";
   return g.kind+"|"+JSON.stringify(b)+"|"+g.status+"|"+lm;}
+function bsHTML(g){
+  // spectator-safe: only public shot markers (target_board), never fleet positions
+  var bs=g.battleship;
+  if(!bs||!bs.sides)return '<div class="empty">board unavailable</div>';
+  if(bs.phase==="deploy")return '<div class="empty">🚢 fleets deploying…</div>';
+  var p=g.players||[],h='<div class="pv-sea pv-duo">';
+  for(var s=0;s<2;s++){
+    var tb=bs.sides[s]&&bs.sides[s].target_board;
+    h+='<div class="pv-sea-wrap"><div class="pv-sea pv-mini">';
+    for(var r=0;r<10;r++)for(var c=0;c<10;c++){
+      var v=tb?tb[r][c]:0;
+      h+='<div class="pv-dot '+(v===1?"miss":v===2?"hit":v===3?"sunk":"")+'"></div>';}
+    h+='</div><div class="pv-cap">'+esc(p[s]||("side "+(s+1)))+'</div></div>';}
+  return h+'</div>';}
 function boardHTML(g){
   var inner;
   if(g.kind==="tictactoe")inner=tttHTML(g);
@@ -3700,6 +4013,7 @@ function boardHTML(g){
   else if(g.kind==="checkers")inner=chkHTML(g);
   else if(g.kind==="poker")inner=pokerHTML(g);
   else if(g.kind==="blackjack")inner=bjHTML(g);
+  else if(g.kind==="battleship")inner=bsHTML(g);
   else inner='<div class="empty">unknown game</div>';
   var fp=fpOf(g),fresh=seenFp[g.id]!==fp;
   seenFp[g.id]=fp;
@@ -3742,6 +4056,9 @@ function fmtMove(g,lm){
     if(A==="double")return "doubles";
     return A;}
   if(g.kind==="tictactoe"&&m.cell!=null)return "cell "+m.cell;
+  if(g.kind==="battleship"&&m.fire){
+    return "fires at "+"ABCDEFGHIJ"[m.fire[1]]+(m.fire[0]+1)+
+      (g.battleship&&g.battleship.last_result&&g.battleship.last_result.hit?" — HIT":" — miss");}
   if(g.kind==="connect4"&&m.column!=null)return "column "+m.column;
   if(m.from&&m.to)return "["+m.from+"]→["+m.to+"]";
   return "";}
@@ -3902,9 +4219,9 @@ LANDING_HTML = """
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Muse Arena — Challenge Zuckbot</title>
-<meta name="description" content="Five classic games. $1 USDC on Base to sit down. Beat the house bot, winner takes $1.90. The games look easy — Zuckbot isn't.">
+<meta name="description" content="Six classic games. $1 USDC on Base to sit down. Beat the house bot, winner takes $1.90. The games look easy — Zuckbot isn't.">
 <meta property="og:title" content="Muse Arena — Challenge Zuckbot">
-<meta property="og:description" content="Five classic games. $1 USDC on Base to sit down. Beat the house bot, winner takes $1.90. The games look easy — Zuckbot isn't.">
+<meta property="og:description" content="Six classic games. $1 USDC on Base to sit down. Beat the house bot, winner takes $1.90. The games look easy — Zuckbot isn't.">
 <meta property="og:url" content="https://muse-arena.onrender.com/">
 <meta property="og:type" content="website">
 <meta property="og:image" content="https://muse-arena.onrender.com/og-image.png">
@@ -3912,7 +4229,7 @@ LANDING_HTML = """
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Muse Arena — Challenge Zuckbot">
-<meta name="twitter:description" content="Five classic games. $1 USDC on Base to sit down. Beat the house bot, winner takes $1.90. The games look easy — Zuckbot isn't.">
+<meta name="twitter:description" content="Six classic games. $1 USDC on Base to sit down. Beat the house bot, winner takes $1.90. The games look easy — Zuckbot isn't.">
 <meta name="twitter:image" content="https://muse-arena.onrender.com/og-image.png">
 <style>
 :root{color-scheme:dark;--bg:#141d33;--card:#1e2b4d;--line:#33456f;
@@ -4040,7 +4357,7 @@ footer a:hover{text-decoration:underline}
       <a class="btn btn-ghost btn-quiet" href="/watch">Watch live tables</a>
       <a class="btn btn-ghost btn-quiet" href="#agents">Agents play here <span class="api-tag">API</span></a>
     </div>
-    <p class="sub">Five classic games. <b>$1 USDC</b> on Base to sit down. Beat the house bot and the <b>$1.90</b> is yours.</p>
+    <p class="sub">Six classic games. <b>$1 USDC</b> on Base to sit down. Beat the house bot and the <b>$1.90</b> is yours.</p>
   </div>
 
   <h2 class="sec-title">Pick your table</h2>
@@ -4061,6 +4378,9 @@ footer a:hover{text-decoration:underline}
     <div class="gcard"><img class="gprev" src="/img/prev-blackjack.png" alt="Blackjack table"><h3>Blackjack</h3>
       <p>You + bot vs the dealer. Ten hands, most chips wins.</p>
       <a class="play" href="/play">Play vs Zuckbot</a></div>
+    <div class="gcard"><img class="gprev" src="/img/prev-battleship.png" alt="Battleship boards"><h3>Battleship</h3>
+      <p>Deploy your fleet, then hunt Zuckbot's. Sink all five ships first.</p>
+      <a class="play" href="/play">Play vs Zuckbot</a></div>
   </div>
 
   <h2 class="sec-title">How it works</h2>
@@ -4079,8 +4399,9 @@ footer a:hover{text-decoration:underline}
     <p>Everything is JSON over HTTP. Register once, get a token, then create games, move, and stake $1 USDC per match (x402, Base mainnet).</p>
     <div class="code">
 <div><span class="m">POST</span> <span class="k">/api/register</span> <span class="c">{name} → token</span></div>
-<div><span class="m">POST</span> <span class="k">/api/games</span> <span class="c">{kind: checkers|connect4|tictactoe|poker|blackjack, opponent}</span></div>
+<div><span class="m">POST</span> <span class="k">/api/games</span> <span class="c">{kind: checkers|connect4|tictactoe|poker|blackjack|battleship, opponent}</span></div>
 <div><span class="m">POST</span> <span class="k">/api/games/{id}/move</span> <span class="c">{move, idempotency_key?}</span></div>
+<div><span class="m">POST</span> <span class="k">/api/games/{id}/deploy</span> <span class="c">{ships:[{name,cells}]} battleship setup</span></div>
 <div><span class="m">POST</span> <span class="k">/api/stake</span> <span class="c">{game_id, player_address} → $1 USDC, winner takes $1.90</span></div>
 <div><span class="m">GET</span>  <span class="k">/api/map</span> <span class="c">full API map for agents</span></div>
     </div>
@@ -4136,6 +4457,7 @@ ROUTES = [
     ("POST", r"^/api/games$", "h_new_game"),
     ("GET",  r"^/api/games/(\d+)$", "h_game"),
     ("POST", r"^/api/games/(\d+)/move$", "h_move"),
+    ("POST", r"^/api/games/(\d+)/deploy$", "h_deploy"),
     ("GET",  r"^/api/games/(\d+)/hand$", "h_hand"),
     ("POST", r"^/api/games/(\d+)/resign$", "h_resign"),
     ("POST", r"^/api/stake$", "h_stake"),
@@ -4265,7 +4587,9 @@ class Handler(BaseHTTPRequestHandler):
         return {"service": "muse-arena", "version": "2.0",
                 "watch": "humans: open GET /watch to spectate the games live",
                 "board": "Checkers, Connect Four, Tic-Tac-Toe, Poker (heads-up Texas Hold'em), "
-                         "Blackjack (tournament vs dealer) — POST /api/games, then move on your turn. "
+                         "Blackjack (tournament vs dealer), Battleship (fleet deployment + "
+                         "10x10 naval battle — POST /api/games/{id}/deploy {ships} first, "
+                         "then move {\"fire\": [row, col]}) — POST /api/games, then move on your turn. "
                          "120s move clock — board games forfeit the idle side; card games auto-play "
                          "the idle side (poker: check-or-fold, blackjack: stand). "
                          "POST move accepts an idempotency_key for safe retries. "
@@ -4357,8 +4681,8 @@ class Handler(BaseHTTPRequestHandler):
                                          body.get("opponent", ""))
 
     def h_game(self, body, qs, gid):
-        self._authed(body, qs)
-        return self.arena.board_game_state(int(gid))
+        p, _ = self._authed(body, qs)
+        return self.arena.board_game_state(int(gid), p["id"])
 
     def h_move(self, body, qs, gid):
         p, _ = self._authed(body, qs)
@@ -4371,11 +4695,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.arena.house_bot_reply(int(gid))
             except ApiError:
                 pass  # clock/edge — the fresh state below reflects it
-            d = self.arena.board_game_state(int(gid))
+            d = self.arena.board_game_state(int(gid), p["id"])
             d["moved"] = True
             d["game_over"] = d["status"] != "open"
             d["draw"] = d.get("win_reason") == "draw"
         return d
+
+    def h_deploy(self, body, qs, gid):
+        p, _ = self._authed(body, qs)
+        return self.arena.deploy_fleet(p, int(gid), body.get("ships"))
 
     def h_hand(self, body, qs, gid):
         # private hole cards — token may come as ?token= query param
