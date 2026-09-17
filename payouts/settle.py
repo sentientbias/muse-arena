@@ -68,6 +68,12 @@ def compute_payouts(winner_id, stakes):
     Returns [(player_address, amount_units, kind)] where kind is
     'win' | 'draw_refund' | 'refund'. All math in integer base units.
     """
+    # A single stake can never produce a winner payout: one player cannot
+    # win a pot they alone funded, even if the board game itself has a
+    # winner. Always a 1:1 refund.
+    if len(stakes) == 1:
+        s = stakes[0]
+        return [(s["player_address"], s["amount_units"], "refund")]
     if winner_id is not None:
         addrs = {s["player_id"]: s["player_address"] for s in stakes}
         if winner_id not in addrs:

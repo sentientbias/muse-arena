@@ -257,6 +257,8 @@ def run_tests(fake):
         (A1, 1_000_000, "draw_refund"), (A2, 1_000_000, "draw_refund")]
     # single stake on a finished game: refund
     assert settle.compute_payouts(None, srows[:1]) == [(A1, 1_000_000, "refund")]
+    # single stake + board-game winner: STILL a 1:1 refund, never a $1.90 win
+    assert settle.compute_payouts(1, srows[:1]) == [(A1, 1_000_000, "refund")]
     # totals balance: win case pays 1.9M of a 2.0M pot
     assert sum(u for _, u, _ in settle.compute_payouts(2, srows)) == 1_900_000
     assert sum(u for _, u, _ in settle.compute_payouts(None, srows)) == 2_000_000
