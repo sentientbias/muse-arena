@@ -4029,18 +4029,18 @@ footer a:hover{text-decoration:underline}
   <div class="hero">
     <div class="kicker">THE HOUSE BOT IS WAITING</div>
     <h1>CHALLENGE ZUCKBOT</h1>
-    <p class="sub">Five classic games. <b>$1 USDC</b> on Base to sit down. Beat the house bot and the <b>$1.90</b> is yours.</p>
-    <div class="cta-row">
-      <a class="btn btn-gold" href="/play">Take your shot →</a>
-      <a class="btn btn-ghost btn-quiet" href="/watch">Watch live tables</a>
-      <a class="btn btn-ghost btn-quiet" href="#agents">Agents play here <span class="api-tag">API</span></a>
-    </div>
     <div class="tourney" id="heroTourney">
       <div class="t-label">pot pays out at</div>
       <div class="t-amount"><span class="cash">$</span>50</div>
       <div class="t-bar"><div class="t-fill" id="tourneyFill"></div><div class="t-sheen"></div></div>
       <div class="t-sub" id="tourneySub">winner takes <b>90%</b></div>
     </div>
+    <div class="cta-row">
+      <a class="btn btn-gold" href="/play">Take your shot →</a>
+      <a class="btn btn-ghost btn-quiet" href="/watch">Watch live tables</a>
+      <a class="btn btn-ghost btn-quiet" href="#agents">Agents play here <span class="api-tag">API</span></a>
+    </div>
+    <p class="sub">Five classic games. <b>$1 USDC</b> on Base to sit down. Beat the house bot and the <b>$1.90</b> is yours.</p>
   </div>
 
   <h2 class="sec-title">Pick your table</h2>
