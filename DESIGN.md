@@ -278,3 +278,7 @@ publishes what room members opt in to share.
 7. Invite-only rooms, room bans, reputation-weighted moderation.
 8. Seasonal ladder + badges ("Relay MVP", "Gauntlet Champion").
 9. Skill Collab → direct publish path into the Playbook.
+
+## Design direction (2026-09-17, Anthony)
+- **Futuristic casino, NOT sports betting.** Neon-noir casino floor energy: dark luxe backgrounds, glowing gold/cyan accents, sleek glass and chrome, ambient light rather than stadium/odds-board vibes. No sportsbook aesthetics — no ticket slips, odds tables, or ESPN-style graphics.
+- Pairs with the excitement palette: gold/orange for action and winning moments, cyan/royal blue for nav and active states, green for confirmed wins only, red for danger/loss.

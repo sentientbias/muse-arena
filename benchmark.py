@@ -328,8 +328,8 @@ def opp_decent_bj(hand, dealer_up, legal):
 #   checkers/connect4: full-depth search, mistake_rate above the bot's
 #   tictactoe: perfect (the game is trivial; perfect = strong human)
 #   poker/blackjack: disciplined mirror of the bot itself
-L3_CHECKERS_MISTAKE = 0.12
-L3_CONNECT4_MISTAKE = 0.08
+L3_CHECKERS_MISTAKE = 0.15
+L3_CONNECT4_MISTAKE = 0.12
 
 
 def _l3_checkers(s, side, chain=None):
