@@ -900,7 +900,7 @@ class Arena:
         rid = self._insert("INSERT INTO rooms (name, kind, topic, owner_id, created_at)"
                            " VALUES (?,?,?,?,?)",
                            (HUMAN_ROOM_NAME, "game",
-                            "humans vs agents — checkers tables", bot["id"], now()))
+                            "humans vs agents — all tables", bot["id"], now()))
         self._q("INSERT INTO memberships (room_id, player_id, joined_at)"
                 " VALUES (?,?,?) ON CONFLICT (room_id, player_id) DO NOTHING",
                 (rid, bot["id"], now()))
@@ -911,12 +911,15 @@ class Arena:
                 " VALUES (?,?,?) ON CONFLICT (room_id, player_id) DO NOTHING",
                 (room_id, player_id, now()))
 
-    def human_challenge(self, human, opponent_name):
-        """A human challenges an agent (or the house bot) to checkers.
-        Returns the game state. One open challenge per human at a time —
+    def human_challenge(self, human, opponent_name, kind="checkers"):
+        """A human challenges an agent (or the house bot) to any board/card
+        game. Returns the game state. One open game per human per kind —
         re-challenging while one is open returns the existing game."""
         if not human.get("is_human"):
             raise ApiError(403, "human challengers only")
+        kind = (kind or "checkers").lower()
+        if kind not in BOARD_KINDS:
+            raise ApiError(400, "kind must be one of: " + ", ".join(BOARD_KINDS))
         room_id = self._human_room()
         self._join_human_room(room_id, human["id"])
         s = (opponent_name or "").strip().lower()
@@ -933,22 +936,22 @@ class Arena:
             if opp.get("is_human"):
                 raise ApiError(400, "that's another human — challenge an agent or Zuckbot")
             is_house = False
-        # one open challenge per human: a blank challenge resumes it (404 if
-        # none is open — it never creates a game), naming someone new while
-        # one is open is a 409.
+        # one open game per human per kind: a blank challenge resumes it
+        # (404 if none is open — it never creates a game), naming someone
+        # new while one is open is a 409.
         for g in self._rows("SELECT id, players_json FROM board_games"
-                            " WHERE room_id=? AND kind='checkers' AND status='open'"
-                            " ORDER BY created_at DESC", (room_id,)):
+                            " WHERE room_id=? AND kind=? AND status='open'"
+                            " ORDER BY created_at DESC", (room_id, kind)):
             if human["id"] in json.loads(g["players_json"]):
                 if not s:
                     return self.board_game_state(g["id"])
-                raise ApiError(409, "you already have an open game — finish it"
-                                    " or resign before challenging someone new")
+                raise ApiError(409, "you already have an open %s game — finish it"
+                                    " or resign before challenging someone new" % kind)
         if not s:
             raise ApiError(404, "no open game — challenge Zuckbot (or another"
                                 " agent) to start one")
         self._join_human_room(room_id, opp["id"])
-        g = self.new_board_game(human, room_id, "checkers", opp["name"])
+        g = self.new_board_game(human, room_id, kind, opp["name"])
         # humans move first (challenger) and get the generous clock
         self._q("UPDATE board_games SET turn_deadline=?, turn_clock=?"
                 " WHERE id=?",
@@ -967,19 +970,25 @@ class Arena:
             if live >= 2:
                 self._q("UPDATE stakes SET status='active' WHERE game_id=?"
                         " AND status='pending'", (g["id"],))
+            # card games: the bot may act first (poker button) — answer now
+            # so the human never stares at a stuck "bot to move" table.
+            try:
+                self.house_bot_reply(g["id"])
+            except ApiError:
+                pass
         return self.board_game_state(g["id"])
 
     def human_challenges(self):
-        """Open human-vs-agent checkers games (for agents to discover)."""
+        """Open human-vs-agent games, all kinds (for agents to discover)."""
         room_id = self._human_room()
         out = []
-        for g in self._rows("SELECT id, players_json, created_at FROM board_games"
-                            " WHERE room_id=? AND kind='checkers' AND status='open'"
+        for g in self._rows("SELECT id, kind, players_json, created_at FROM board_games"
+                            " WHERE room_id=? AND status='open'"
                             " ORDER BY created_at DESC LIMIT 25", (room_id,)):
             players = json.loads(g["players_json"])
             names = [self._player_name(p) for p in players]
             st = self.game_stake_info(g["id"])
-            out.append({"game_id": g["id"], "players": names,
+            out.append({"game_id": g["id"], "kind": g["kind"], "players": names,
                         "staked": st["staked"],
                         "pot_units": st["pot_units"],
                         "created_at": g["created_at"]})
@@ -1058,22 +1067,54 @@ class Arena:
                          "stake recorded — game goes live when both sides stake")}
 
     def house_bot_reply(self, game_id):
-        """If it's the house bot's turn in an open checkers game, move now."""
-        g = self._board_row(game_id)
-        if g["status"] != "open" or g["kind"] != "checkers":
-            return None
+        """If it's the house bot's turn in an open game, move now.
+        Dispatches per game kind to the bots.py move functions. Loops
+        while the turn stays with the bot (checkers multi-jump chains,
+        or the bot acting first on a new poker street)."""
+        import bots as _bots  # lazy: bots.py imports app at module load
         bot = self._house_bot()
-        if g["turn_pid"] != bot["id"]:
-            return None
-        players = json.loads(g["players_json"])
-        side = players.index(bot["id"])
-        state = json.loads(g["state_json"])
-        chain = state.get("chain")
-        move = chk_bot_move(state["board"], side,
-                            chain=(tuple(chain) if chain else None))
-        if not move:
-            return None
-        return self.make_move(bot, game_id, move)
+        players = side = None
+        moved = None
+        for _ in range(12):  # safety cap on chained replies
+            g = self._board_row(game_id)
+            if g["status"] != "open" or g["turn_pid"] != bot["id"]:
+                break
+            if players is None:
+                players = json.loads(g["players_json"])
+                side = players.index(bot["id"])
+            state = json.loads(g["state_json"])
+            kind = g["kind"]
+            move = None
+            if kind == "checkers":
+                chain = state.get("chain")
+                move = _bots.checkers_move(
+                    state["board"], side,
+                    chain=(tuple(chain) if chain else None))
+            elif kind == "connect4":
+                move = _bots.connect4_move(state, side)
+            elif kind == "tictactoe":
+                move = _bots.tictactoe_move(state, side)
+            elif kind == "poker":
+                hole = self._secret_get(game_id, state["hand_no"], bot["id"])
+                legal = self._poker_legal(state, side)
+                ctx = {"pot": state["pot"],
+                       "to_call": state["current_bet"] - state["bets"][side],
+                       "stack": state["stacks"][side],
+                       "my_bet": state["bets"][side],
+                       "is_button": state["button"] == side,
+                       "bb": state["bb"],
+                       "hand_no": state["hand_no"]}
+                move = _bots.sanitize_poker_move(
+                    legal, _bots.poker_move(hole, state["community"],
+                                            state["street"], legal, ctx))
+            elif kind == "blackjack":
+                legal = self._bj_legal(state, side)
+                move = _bots.blackjack_move(state["hands"][side],
+                                            state["dealer_up"], legal)
+            if not move:
+                break
+            moved = self.make_move(bot, game_id, move)
+        return moved
 
     # -- rooms ---------------------------------------------------
     def create_room(self, player, name, kind="mixed", topic=""):
@@ -4420,9 +4461,11 @@ class Handler(BaseHTTPRequestHandler):
         return self.arena.human_session(body.get("wallet"), body.get("name"))
 
     def h_human_challenge(self, body, qs):
-        """Challenge an agent (or the house bot Zuckbot) to checkers."""
+        """Challenge an agent (or the house bot Zuckbot) to any game kind.
+        Body: {token, opponent, kind} — kind defaults to checkers."""
         p, _ = self._authed(body, qs)
-        return self.arena.human_challenge(p, body.get("opponent"))
+        return self.arena.human_challenge(p, body.get("opponent"),
+                                          body.get("kind"))
 
     def h_human_stake(self, body, qs):
         """Record a human's $1 USDC stake after the wallet signed it.
@@ -4439,7 +4482,7 @@ class Handler(BaseHTTPRequestHandler):
         return self.arena.human_stake(p, game_id, body.get("tx_hash"))
 
     def h_human_challenges(self, body, qs):
-        """Public: open human-vs-agent checkers games (for agents)."""
+        """Public: open human-vs-agent games, all kinds (for agents)."""
         return {"games": self.arena.human_challenges()}
 
     def h_human_config(self, body, qs):
