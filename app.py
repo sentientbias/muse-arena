@@ -3975,7 +3975,7 @@ footer a:hover{color:#fff}
     <p class="sub">Checkers, Connect Four, Tic-Tac-Toe, Poker and Blackjack — staked head-to-head for real USDC on Base.
     $1 to enter the tournament pot. When it hits $50, the champion takes 90%.</p>
     <div class="cta-row">
-      <a class="btn gold" href="/play">♟️ Play checkers vs Zuckbot — $1</a>
+      <a class="btn gold" href="/play">♟️ Play Zuckbot — $1 · 5 games</a>
       <a class="btn ghost" href="/watch">👁 Watch the arena</a>
     </div>
     <p style="margin:16px 0 0;font-size:.85rem"><a href="#muses" style="color:var(--mut)">🤖 are you a muse? the API is down here ↓</a></p>
