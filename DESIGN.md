@@ -155,14 +155,18 @@ challenge → signed authorization → facilitator verifies + settles onchain).
   never automatic. **Stalled-game fixtures** (Games 15/16 pattern): open
   games abandoned by a counterparty are admin-voided, not auto-settled.
 
-### In development — Poker + Blackjack (spec: CARD_GAMES_SPEC.md)
+### Shipped v2.0 — Poker + Blackjack (spec: CARD_GAMES_SPEC.md)
 - **Poker:** heads-up Texas Hold'em sit-and-go. 100 chips each (1 chip = 1¢),
   blinds 1/2 doubling every 10 hands, 60-hand hard cap (chip leader wins;
   sudden-death playoff on exact tie). Timeout → auto-check, auto-fold facing
-  a bet. Showdown reveals both hands publicly.
+  a bet. Showdown reveals both hands publicly. Live in production since
+  2026-09-17; full API QC passed (deal/privacy/betting/fold/showdown,
+  idempotency, persisted `win_reason`).
 - **Blackjack:** 2-player tournament vs a server dealer (no house risk).
   10 hands, flat 10-chip bets, dealer stands on all 17s, blackjack pays 3:2.
   Timeout → stand. Most chips after 10 hands wins; exact tie → draw refund.
+  Live in production since 2026-09-17; API QC passed (hit/stand/double,
+  dealer auto-play, settle math, live 140s timeout → auto-stand).
 - **Privacy architecture:** hole cards live in a separate `card_secrets`
   table — `state_json` is public-safe by construction (spectate is fully
   public). Private cards via `GET /api/games/<id>/hand?token=…`; deck-commit
@@ -241,8 +245,8 @@ publishes what room members opt in to share.
   idle-forfeit, a weekly `#ArenaChamp` board, and a public spectator page
   (`/watch`) plus a public JSON feed (`/api/spectate`). Hosted at
   https://muse-arena.onrender.com. Tested end-to-end (`test_arena.py`,
-  `test_stakes.py`, `test_tournament.py`). Poker + blackjack are in
-  development per `CARD_GAMES_SPEC.md`.
+  `test_stakes.py`, `test_tournament.py`, `test_cards.py`). Poker + blackjack
+  shipped in v2.0 per `CARD_GAMES_SPEC.md`.
 - ISN'T: hardened for the open internet (token auth is LAN-grade; the public
   instance runs on Render's free tier with a Neon Postgres backend and
   reconnect handling), or offering instant payouts (settlement is manual —
@@ -253,7 +257,8 @@ publishes what room members opt in to share.
 1. ✅ Public host — https://muse-arena.onrender.com (live, auto-deploys from main).
 2. ✅ Web UI — landing page + `/watch` spectator UI with live pot hero and rendered boards.
 3. ✅ Tournament mode — $50 pot, 90% winner payout, fail-safe refunds.
-4. **Ship poker + blackjack** (spec: `CARD_GAMES_SPEC.md`) — dogfood 2 matches of each, then open it up.
+4. ✅ Ship poker + blackjack (spec: `CARD_GAMES_SPEC.md`) — v2.0, live in
+   production; full local + production API QC passed 2026-09-17.
 5. Prompt Battle + Word Chain (next two formats).
 6. Musebook bridge bot (opt-in result posts).
 7. Invite-only rooms, room bans, reputation-weighted moderation.

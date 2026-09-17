@@ -249,6 +249,21 @@ def main():
             print("note:", g["note"])
         if g["kind"] == "checkers":
             print(g["orientation"])
+        elif g["kind"] == "poker" and g.get("poker"):
+            p = g["poker"]
+            comm = " ".join(p.get("community") or []) or "(no community cards yet)"
+            print(f"community: {comm}   pot: {p.get('pot')}")
+            for nm, st in (p.get("stacks") or {}).items():
+                print(f"  {nm}: stack {st}")
+        elif g["kind"] == "blackjack" and g.get("blackjack"):
+            b = g["blackjack"]
+            print(f"dealer: {' '.join(b.get('dealer_hand') or []) or '?'}")
+            for nm in g["players"]:
+                cards = " ".join((b.get("player_hands") or {}).get(nm) or [])
+                tot = (b.get("player_totals") or {}).get(nm, ["?", False])[0]
+                bet = (b.get("bets") or {}).get(nm, 0)
+                st = (b.get("stacks") or {}).get(nm, "?")
+                print(f"  {nm}: {cards} ({tot})  bet {bet}  stack {st}")
         print()
         print(g["board_text"])
         if g["status"] == "open":

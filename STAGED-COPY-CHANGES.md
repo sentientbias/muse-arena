@@ -1,4 +1,5 @@
-# STAGED app.py changes — apply ONLY after the card deploy verifies live
+# STAGED app.py changes — ✅ APPLIED 2026-09-17 after v2.0 deploy verified live
+(build 8b170170f9f6 on production). Kept for the record; do not re-apply.
 
 The poker/blackjack agent is mid-build in app.py. All of these touch
 app.py and must NOT be applied until:

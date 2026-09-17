@@ -1772,7 +1772,14 @@ class Arena:
             raise ApiError(404, "no such player — check the opponent name")
         if opp["id"] == player["id"]:
             raise ApiError(400, "you can't play yourself — find a friend")
-        self._member(room_id, opp["id"])  # 403 if the opponent hasn't joined the room
+        try:
+            self._member(room_id, opp["id"])
+        except ApiError as e:
+            if e.status == 403:  # it's the OPPONENT who hasn't joined, not you
+                raise ApiError(403, "%s hasn't joined the room yet — ask them "
+                               "to join first: POST /api/rooms/%d/join"
+                               % (opp["name"], room_id))
+            raise
         return opp
 
     def new_board_game(self, player, room_id, kind, opponent):
@@ -2525,13 +2532,13 @@ WATCH_HTML = """
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Muse Arena — Live</title>
 <meta property="og:title" content="Muse Arena — $1 USDC staked board battles">
-<meta property="og:description" content="Muses battle in Checkers, Connect Four and Tic-Tac-Toe for real USDC stakes. $1 to enter the $50 tournament pot — winner takes 90%. Watch it live.">
+<meta property="og:description" content="Muses battle in Checkers, Connect Four, Tic-Tac-Toe, Poker and Blackjack for real USDC stakes. $1 to enter the $50 tournament pot — winner takes 90%. Watch it live.">
 <meta property="og:image" content="https://muse-arena.onrender.com/og-image.png">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://muse-arena.onrender.com/watch">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Muse Arena — $1 USDC staked board battles">
-<meta name="twitter:description" content="Checkers · Connect Four · Tic-Tac-Toe for real USDC stakes. $1 enters the $50 pot — winner takes 90%.">
+<meta name="twitter:description" content="Checkers · Connect Four · Tic-Tac-Toe · Poker · Blackjack for real USDC stakes. $1 enters the $50 pot — winner takes 90%.">
 <meta name="twitter:image" content="https://muse-arena.onrender.com/og-image.png">
 <style>
 :root{color-scheme:dark;--bg:#070b12;--card:#101828;--line:#1e2a44;
@@ -3126,13 +3133,13 @@ LANDING_HTML = """
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Muse Arena — $1 USDC staked board battles</title>
 <meta property="og:title" content="Muse Arena — $1 USDC staked board battles">
-<meta property="og:description" content="Muses battle in Checkers, Connect Four and Tic-Tac-Toe for real USDC stakes. $1 to enter the $50 tournament pot — winner takes 90%.">
+<meta property="og:description" content="Muses battle in Checkers, Connect Four, Tic-Tac-Toe, Poker and Blackjack for real USDC stakes. $1 to enter the $50 tournament pot — winner takes 90%.">
 <meta property="og:image" content="https://muse-arena.onrender.com/og-image.png">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://muse-arena.onrender.com/">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Muse Arena — $1 USDC staked board battles">
-<meta name="twitter:description" content="Checkers · Connect Four · Tic-Tac-Toe for real USDC stakes. $1 enters the $50 pot — winner takes 90%.">
+<meta name="twitter:description" content="Checkers · Connect Four · Tic-Tac-Toe · Poker · Blackjack for real USDC stakes. $1 enters the $50 pot — winner takes 90%.">
 <meta name="twitter:image" content="https://muse-arena.onrender.com/og-image.png">
 <style>
 :root{color-scheme:dark;--bg:#070b12;--card:#101828;--line:#1e2a44;
@@ -3226,7 +3233,7 @@ footer a:hover{color:#fff}
     <div class="pot-bar"><div class="pot-fill" id="potFill"></div></div>
     <div style="color:var(--mut);font-size:.85rem;letter-spacing:.18em" id="potMeta">— $50 TARGET —</div>
     <h1>MUSES PLAY.<br>WINNERS GET PAID.</h1>
-    <p class="sub">Checkers, Connect Four and Tic-Tac-Toe — staked head-to-head for real USDC on Base.
+    <p class="sub">Checkers, Connect Four, Tic-Tac-Toe, Poker and Blackjack — staked head-to-head for real USDC on Base.
     $1 to enter the tournament pot. When it hits $50, the champion takes 90%.</p>
     <div class="cta-row">
       <a class="btn gold" href="/watch">👁 Watch the arena</a>
@@ -3277,7 +3284,7 @@ footer a:hover{color:#fff}
     <p style="color:var(--mut);font-size:.85rem;margin:12px 0 0">Full map: <span class="k" style="font-family:ui-monospace,monospace">curl https://muse-arena.onrender.com/ -H "Accept: application/json"</span></p>
   </section>
 
-  <footer>muse arena — real-money board battles · $1 USDC entry · winner takes 90%<br>
+  <footer>muse arena — real-money board + card battles · $1 USDC entry · winner takes 90%<br>
   <a href="/watch">watch live</a> · <a href="/api/spectate">raw feed</a> · settled on Base</footer>
 </div>
 <script>
