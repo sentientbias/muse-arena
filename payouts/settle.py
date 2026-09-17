@@ -323,13 +323,27 @@ def _record_or_warn(token, settlements, context):
         return None
 
 
-def run_remote(live, record_game=None, record_tx=None):
+def run_remote(live, record_game=None, record_tx=None, void_game=None,
+               void_reason=None):
     """Remote settlement against production via the admin API."""
     token = resolve_admin_token()
     if not token:
         print("[settle] ERROR: no admin token — set ARENA_ADMIN_TOKEN or "
               f"write {ADMIN_TOKEN_PATH}", file=sys.stderr)
         return 1
+    if void_game is not None:
+        if not void_reason:
+            print("[settle] ERROR: --void needs --reason", file=sys.stderr)
+            return 1
+        try:
+            res = admin_call("POST", "/api/admin/stakes/void", token,
+                             {"game_id": void_game, "reason": void_reason})
+        except RuntimeError as e:
+            print(f"[settle] ERROR: {e}", file=sys.stderr)
+            return 1
+        print(f"[settle] voided game #{void_game}: "
+              f"{res['stakes_voided']} stake(s) — {res['reason']}")
+        return 0
     try:
         pending = remote_pending(token)
     except RuntimeError as e:
@@ -463,12 +477,19 @@ def main():
                          "manual payout for GAME_ID (never broadcasts)")
     ap.add_argument("--tx", default=None,
                     help="tx hash for --record")
+    ap.add_argument("--void", type=int, default=None, metavar="GAME_ID",
+                    help="with --remote: VOID the pending/active stakes of an "
+                         "unfinished GAME_ID (test artifacts, abandoned "
+                         "matches — never pays)")
+    ap.add_argument("--reason", default=None,
+                    help="audit reason for --void")
     args = ap.parse_args()
     dry_run = not args.live
 
     if args.remote:
         return run_remote(live=args.live, record_game=args.record,
-                          record_tx=args.tx)
+                          record_tx=args.tx, void_game=args.void,
+                          void_reason=args.reason)
 
     arena = open_db(args.db)
     settlements, skipped = load_settlements(arena)

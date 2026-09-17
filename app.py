@@ -1071,6 +1071,26 @@ class Arena:
             n += cur.rowcount
         return {"stakes_settled": n}
 
+    def admin_void_game(self, game_id, reason):
+        """Void the stakes of an unfinished game (never-completed test games,
+        abandoned matches). Only touches pending/active rows — a finished
+        game's stakes can never be voided, only settled."""
+        g = self._row("SELECT id, status FROM board_games WHERE id=?",
+                      (int(game_id),))
+        if not g:
+            raise ApiError(404, "no such game")
+        g = dict(g)
+        if g["status"] == "finished":
+            raise ApiError(400, "game is finished — settle it, don't void it")
+        if not reason or len(str(reason)) < 8:
+            raise ApiError(400, "a reason is required")
+        cur = self._q(
+            "UPDATE stakes SET status='void' "
+            "WHERE game_id=? AND status IN ('pending','active')",
+            (int(game_id),))
+        return {"game_id": int(game_id), "stakes_voided": cur.rowcount,
+                "reason": reason}
+
     # -- GAME: tournament pot (v1.5) -------------------------------------
     # ONE visible pot. $1 USDC entries feed it; it pays out when it hits $50.
     # The $50 is a TARGET, never a guarantee — the display always shows the
@@ -1540,6 +1560,7 @@ ROUTES = [
     ("GET",  r"^/api/stakes$", "h_stakes"),
     ("GET",  r"^/api/admin/stakes/pending$", "h_admin_pending"),
     ("POST", r"^/api/admin/settle$", "h_admin_settle"),
+    ("POST", r"^/api/admin/stakes/void$", "h_admin_void"),
     ("POST", r"^/api/tournament/enter$", "h_tournament_enter"),
     ("GET",  r"^/api/tournament$", "h_tournament"),
     ("GET",  r"^/api/leaderboard$", "h_leaderboard"),
@@ -1832,6 +1853,11 @@ class Handler(BaseHTTPRequestHandler):
     def h_admin_settle(self, body, qs):
         self._admin(body, qs)
         return self.arena.admin_record_settlement(body.get("settlements"))
+
+    def h_admin_void(self, body, qs):
+        self._admin(body, qs)
+        return self.arena.admin_void_game(body.get("game_id"),
+                                          body.get("reason", ""))
 
     def h_stakes(self, body, qs):
         # public board: open stakes, completed games, payouts
