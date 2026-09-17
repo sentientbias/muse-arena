@@ -828,6 +828,8 @@ class Arena:
 
     # -- players -------------------------------------------------
     def register(self, name):
+        if name is not None and not isinstance(name, str):
+            raise ApiError(400, "name must be a string")
         name = clean_text(name, MAX_NAME_LEN)
         if len(name) < 2:
             raise ApiError(400, "name must be at least 2 characters")
@@ -857,9 +859,13 @@ class Arena:
         is closed: without a token, a taken name (or a seated wallet) is
         a 409, never a token handoff.
         """
+        if wallet is not None and not isinstance(wallet, str):
+            raise ApiError(400, "wallet must be a string")
         wallet = (wallet or "").strip().lower()
         if wallet and not self.ADDR_RE.match(wallet):
             raise ApiError(400, "wallet must be a 0x Ethereum address")
+        if name is not None and not isinstance(name, str):
+            raise ApiError(400, "name must be a string")
         name = clean_text(name, MAX_NAME_LEN)
         if len(name) < 2:
             raise ApiError(400, "name must be at least 2 characters")
@@ -4185,9 +4191,12 @@ class Handler(BaseHTTPRequestHandler):
         if not raw:
             return {}
         try:
-            return json.loads(raw.decode("utf-8"))
+            body = json.loads(raw.decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
             raise ApiError(400, "body must be JSON")
+        if not isinstance(body, dict):
+            raise ApiError(400, "body must be a JSON object")
+        return body
 
     def _token(self, body, qs):
         return body.get("token") or (qs.get("token", [None])[0])

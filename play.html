@@ -34,6 +34,10 @@ p.sub{color:var(--mut);font-size:14px;margin-bottom:16px}
   box-shadow:0 8px 30px rgba(0,0,0,.45)}
 .card h2{font-size:18px;margin-bottom:8px;color:var(--gold2)}
 .card h2 .n{color:var(--cyan)}
+.stake-kind{color:var(--txt);font-weight:400;font-size:15px}
+.backrow{margin-top:14px;font-size:13px}
+.backrow a{color:var(--cyan);text-decoration:none}
+.backrow a:hover{text-decoration:underline}
 .card p{color:var(--mut);font-size:14px;line-height:1.5;margin-bottom:12px}
 .card p b{color:var(--txt)}
 .btn{display:inline-block;background:linear-gradient(180deg,var(--gold2),var(--gold));
@@ -214,9 +218,11 @@ footer a{color:var(--cyan)}
 
 <!-- 4: stake (wallet connects HERE, at payment time) -->
 <div class="card hidden" id="step3">
-  <h2><span class="n">4 ·</span> Stake $1 USDC</h2>
+  <h2><span class="n">4 ·</span> Stake $1 USDC <span class="stake-kind" id="stakeKind"></span></h2>
   <div id="stakeWallet">
-    <p>Almost there — connect your wallet to send the $1 stake. Open this page in a wallet browser (MetaMask, Coinbase Wallet, …) on <b>Base</b>.</p>
+    <p>Your table is set — the only thing between you and the cards is the $1 stake.
+    Connect your wallet (needed <i>only</i> to send the stake — nothing else uses it).
+    Open this page in a wallet browser (MetaMask, Coinbase Wallet, …) on <b>Base</b>.</p>
     <button class="btn" id="btnConnect">Connect wallet</button>
     <div class="addr hidden" id="walletAddr"></div>
   </div>
@@ -229,6 +235,7 @@ footer a{color:var(--cyan)}
   <input type="text" id="txInput" placeholder="0x…" autocomplete="off">
   <button class="btn ghost" id="btnVerifyTx">Verify tx hash</button>
   </div>
+  <p class="backrow"><a href="#" id="btnBackGame">← pick a different game</a></p>
 </div>
 
 <!-- game -->
@@ -288,7 +295,10 @@ function renderStakeGate(){
   if(connected){
     $("walletAddr").textContent=S.wallet;$("walletAddr").classList.remove("hidden");
   }
+  var sk=$("stakeKind");
+  if(sk) sk.textContent=S.kind&&KIND_LABEL[S.kind]?"· to play "+KIND_LABEL[S.kind]:"";
 }
+$("btnBackGame").onclick=function(e){e.preventDefault();show("stepGame");steps(1);return false;};
 async function connectWallet(){
   var btn=$("btnConnect");btn.disabled=true;
   try{
