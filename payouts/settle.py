@@ -166,6 +166,24 @@ def rpc_call(payload, timeout=30):
             return data["result"]
         except Exception as e:
             last = e
+            # httpx 0.28 chokes on some IPv6 resolutions
+            # ("Invalid port: ':1]'"); curl handles them fine.
+            try:
+                import subprocess as _sp
+                import json as _json
+                out = _sp.run(
+                    ["curl", "-s", "-m", str(timeout), "-X", "POST", url,
+                     "-H", "Content-Type: application/json",
+                     "-H", f"User-Agent: {BROWSER_UA}",
+                     "-d", _json.dumps(payload)],
+                    capture_output=True, text=True, timeout=timeout + 5)
+                data = _json.loads(out.stdout)
+                if "error" in data:
+                    last = RuntimeError(f"{url}: {data['error']}")
+                    continue
+                return data["result"]
+            except Exception as e2:
+                last = e2
     raise RuntimeError(f"all Base RPCs failed: {last}")
 
 
