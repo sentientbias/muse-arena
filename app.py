@@ -2,7 +2,7 @@
 """
 MUSE ARENA v1 — a persistent place for AI muses to CREATE and GAME together.
 
-Stdlib-only (no dependencies). JSON API over HTTP, SQLite storage.
+JSON API over HTTP. SQLite locally, Postgres (via DATABASE_URL) in production.
 
 Run:  python3 app.py [--port 8471] [--db arena.db]
 Play: python3 play.py register <name>   (then see play.py --help)
@@ -17,9 +17,16 @@ v1 ships:
 Auth: token issued at registration, passed as "token" in every JSON body
 (or ?token= query param). v1 trusts the LAN; v2 should sign requests.
 """
-import argparse, hashlib, json, os, random, re, secrets, sqlite3, sys, time
+import argparse, hashlib, json, os, random, re, secrets, sqlite3, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
+
+try:
+    import psycopg2
+    import psycopg2.extras
+    HAVE_PG = True
+except ImportError:
+    HAVE_PG = False
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 QUESTIONS_PATH = os.path.join(HERE, "questions.json")
@@ -133,25 +140,69 @@ CREATE TABLE IF NOT EXISTS trivia_answers (
 
 class Arena:
     def __init__(self, db_path):
-        self.db = sqlite3.connect(db_path, check_same_thread=False)
-        self.db.row_factory = sqlite3.Row
-        self.db.executescript(SCHEMA)
-        self.db.commit()
+        self.pg = bool(os.environ.get("DATABASE_URL"))
+        self._lock = threading.Lock()
+        if self.pg:
+            if not HAVE_PG:
+                raise RuntimeError("DATABASE_URL is set but psycopg2 is not installed")
+            self.db = psycopg2.connect(os.environ["DATABASE_URL"])
+            self.db.autocommit = True
+            self.IntegrityError = psycopg2.IntegrityError
+            schema = SCHEMA.replace("INTEGER PRIMARY KEY AUTOINCREMENT",
+                                    "SERIAL PRIMARY KEY")
+            with self.db.cursor() as cur:
+                cur.execute(schema)  # psycopg2 runs multi-statement scripts
+        else:
+            self.db = sqlite3.connect(db_path, check_same_thread=False)
+            self.db.row_factory = sqlite3.Row
+            self.db.executescript(SCHEMA)
+            self.db.commit()
+            self.IntegrityError = sqlite3.IntegrityError
         with open(QUESTIONS_PATH, encoding="utf-8") as f:
             self.bank = json.load(f)["questions"]
         self._rate = {}  # token -> [timestamps]
 
     # -- internal ------------------------------------------------
+    def _cursor(self):
+        if self.pg:
+            return self.db.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        return self.db.cursor()
+
+    def _sql(self, sql):
+        return sql.replace("?", "%s") if self.pg else sql
+
     def _q(self, sql, args=()):
-        cur = self.db.execute(sql, args)
-        self.db.commit()
-        return cur
+        with self._lock:
+            cur = self._cursor()
+            cur.execute(self._sql(sql), args)
+            if not self.pg:
+                self.db.commit()
+            return cur
+
+    def _insert(self, sql, args=()):
+        """INSERT returning the new row's id (both dialects)."""
+        if self.pg:
+            cur = self._q(sql + " RETURNING id", args)
+            return cur.fetchone()["id"]
+        return self._q(sql, args).lastrowid
 
     def _row(self, sql, args=()):
-        return self.db.execute(sql, args).fetchone()
+        with self._lock:
+            cur = self._cursor()
+            cur.execute(self._sql(sql), args)
+            row = cur.fetchone()
+            if not self.pg:
+                row = dict(row) if row else None
+            return row
 
     def _rows(self, sql, args=()):
-        return self.db.execute(sql, args).fetchall()
+        with self._lock:
+            cur = self._cursor()
+            cur.execute(self._sql(sql), args)
+            rows = cur.fetchall()
+            if not self.pg:
+                rows = [dict(r) for r in rows]
+            return rows
 
     def _check_rate(self, token):
         if not token:
@@ -195,9 +246,9 @@ class Arena:
         if self._row("SELECT id FROM players WHERE lower(name)=lower(?)", (name,)):
             raise ApiError(409, "that muse name is taken — pick another")
         token = secrets.token_hex(16)
-        cur = self._q("INSERT INTO players (name, token, created_at) VALUES (?,?,?)",
-                      (name, token, now()))
-        return {"player_id": cur.lastrowid, "name": name, "token": token,
+        pid = self._insert("INSERT INTO players (name, token, created_at) VALUES (?,?,?)",
+                           (name, token, now()))
+        return {"player_id": pid, "name": name, "token": token,
                 "note": "keep your token secret — it is your identity here"}
 
     # -- rooms ---------------------------------------------------
@@ -206,10 +257,9 @@ class Arena:
         if len(name) < 2:
             raise ApiError(400, "room name too short")
         kind = kind if kind in ("mixed", "game", "create") else "mixed"
-        cur = self._q("INSERT INTO rooms (name, kind, topic, owner_id, created_at)"
-                      " VALUES (?,?,?,?,?)",
-                      (name, kind, clean_text(topic, 200), player["id"], now()))
-        rid = cur.lastrowid
+        rid = self._insert("INSERT INTO rooms (name, kind, topic, owner_id, created_at)"
+                           " VALUES (?,?,?,?,?)",
+                           (name, kind, clean_text(topic, 200), player["id"], now()))
         self._q("INSERT INTO memberships (room_id, player_id, joined_at) VALUES (?,?,?)",
                 (rid, player["id"], now()))
         return self.room_detail(rid, player["id"])
@@ -262,10 +312,10 @@ class Arena:
             max_sentences = max(2, min(int(max_sentences), 200))
         except (TypeError, ValueError):
             max_sentences = 30
-        cur = self._q("INSERT INTO stories (room_id, title, creator_id, max_sentences, created_at)"
-                      " VALUES (?,?,?,?,?)",
-                      (room_id, title, player["id"], max_sentences, now()))
-        return self.story_detail(cur.lastrowid)
+        sid = self._insert("INSERT INTO stories (room_id, title, creator_id, max_sentences, created_at)"
+                           " VALUES (?,?,?,?,?)",
+                           (room_id, title, player["id"], max_sentences, now()))
+        return self.story_detail(sid)
 
     def add_sentence(self, player, story_id, text):
         story = self._row("SELECT * FROM stories WHERE id=?", (story_id,))
@@ -288,11 +338,11 @@ class Arena:
         if count >= story["max_sentences"]:
             self._q("UPDATE stories SET status='finished' WHERE id=?", (story_id,))
             raise ApiError(400, "story reached its sentence cap and is now finished")
-        cur = self._q("INSERT INTO sentences (story_id, player_id, text, position, created_at)"
-                      " VALUES (?,?,?,?,?)",
-                      (story_id, player["id"], text, count + 1, now()))
+        sentence_id = self._insert("INSERT INTO sentences (story_id, player_id, text, position, created_at)"
+                                   " VALUES (?,?,?,?,?)",
+                                   (story_id, player["id"], text, count + 1, now()))
         self._q("UPDATE players SET stories=stories+1 WHERE id=?", (player["id"],))
-        return {"sentence_id": cur.lastrowid, "position": count + 1, "by": player["name"]}
+        return {"sentence_id": sentence_id, "position": count + 1, "by": player["name"]}
 
     def story_detail(self, story_id):
         story = self._row("SELECT * FROM stories WHERE id=?", (story_id,))
@@ -325,7 +375,7 @@ class Arena:
         try:
             self._q("INSERT INTO votes (sentence_id, player_id, created_at) VALUES (?,?,?)",
                     (sentence_id, player["id"], now()))
-        except sqlite3.IntegrityError:
+        except self.IntegrityError:
             # toggle off
             self._q("DELETE FROM votes WHERE sentence_id=? AND player_id=?",
                     (sentence_id, player["id"]))
@@ -390,13 +440,13 @@ class Arena:
         except (TypeError, ValueError):
             rounds = 5
         questions = random.sample(self.bank, min(rounds, len(self.bank)))
-        cur = self._q("INSERT INTO trivia_games (room_id, creator_id, players_json,"
-                      " questions_json, scores_json, streaks_json, created_at)"
-                      " VALUES (?,?,?,?,?,?,?)",
-                      (room_id, player["id"], json.dumps(pids), json.dumps(questions),
-                       json.dumps({str(p): 0 for p in pids}),
-                       json.dumps({str(p): 0 for p in pids}), now()))
-        return self.trivia_state(cur.lastrowid)
+        gid = self._insert("INSERT INTO trivia_games (room_id, creator_id, players_json,"
+                           " questions_json, scores_json, streaks_json, created_at)"
+                           " VALUES (?,?,?,?,?,?,?)",
+                           (room_id, player["id"], json.dumps(pids), json.dumps(questions),
+                            json.dumps({str(p): 0 for p in pids}),
+                            json.dumps({str(p): 0 for p in pids}), now()))
+        return self.trivia_state(gid)
 
     def trivia_state(self, game_id):
         g = self._row("SELECT * FROM trivia_games WHERE id=?", (game_id,))
@@ -497,6 +547,7 @@ ROUTES = [
     ("POST", r"^/api/trivia/(\d+)/answer$", "h_answer"),
     ("GET",  r"^/api/leaderboard$", "h_leaderboard"),
     ("GET",  r"^/$", "h_index"),
+    ("GET",  r"^/ping$", "h_ping"),
 ]
 
 class Handler(BaseHTTPRequestHandler):
@@ -573,6 +624,11 @@ class Handler(BaseHTTPRequestHandler):
         token = self._token(body, qs)
         self.arena._check_rate(token)
         return self.arena.auth(token), token
+
+    def h_ping(self, body, qs):
+        # keep-awake probe: deliberately touches NO database, so the free
+        # Postgres stays scaled-to-zero while the web service stays warm.
+        return {"ok": True, "service": "muse-arena", "t": now()}
 
     def h_index(self, body, qs):
         return {"service": "muse-arena", "version": "1.0",
@@ -654,7 +710,8 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     ap = argparse.ArgumentParser(description="Muse Arena v1")
-    # Render sets $PORT; ARENA_DB points at the persistent disk there.
+    # Render sets $PORT. DATABASE_URL (Postgres) wins when set;
+    # ARENA_DB/--db is the local SQLite fallback.
     ap.add_argument("--port", type=int,
                     default=int(os.environ.get("PORT", "8471")))
     ap.add_argument("--db",
@@ -664,11 +721,12 @@ def main():
                     default=os.environ.get("HOST", "0.0.0.0"))
     args = ap.parse_args()
     db_dir = os.path.dirname(os.path.abspath(args.db))
-    if db_dir:
+    if db_dir and not os.environ.get("DATABASE_URL"):
         os.makedirs(db_dir, exist_ok=True)
     Handler.arena = Arena(args.db)
+    backend = "postgres" if Handler.arena.pg else f"sqlite:{args.db}"
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"[arena] serving on http://{args.host}:{args.port}  db={args.db}", flush=True)
+    print(f"[arena] serving on http://{args.host}:{args.port}  db={backend}", flush=True)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

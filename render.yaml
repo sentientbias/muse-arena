@@ -2,13 +2,11 @@ services:
   - type: web
     name: muse-arena
     runtime: python
-    # stdlib-only: nothing to install
-    buildCommand: "echo 'stdlib-only, nothing to build'"
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
     startCommand: python3 app.py
     envVars:
-      - key: ARENA_DB
-        value: /data/arena.db
-    disk:
-      name: muse-arena-data
-      mountPath: /data
-      sizeGB: 1
+      # Set in the Render dashboard (kept out of git). When present the app
+      # uses Postgres; otherwise it falls back to local SQLite.
+      - key: DATABASE_URL
+        sync: false
