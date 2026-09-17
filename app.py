@@ -3912,8 +3912,9 @@ radial-gradient(1100px 560px at 85% -5%,rgba(251,191,36,.24),transparent 60%),
 radial-gradient(900px 700px at 50% 110%,rgba(34,211,238,.13),transparent 60%)}
 .wrap{max-width:1040px;margin:0 auto;padding:0 18px 70px}
 .topbar{display:flex;justify-content:space-between;align-items:center;padding:16px 4px}
-.brand{font-weight:800;letter-spacing:.18em;font-size:1rem;color:#fff}
-.brand em{font-style:normal;color:var(--cyan)}
+.brand{display:flex;align-items:center;gap:11px;font-weight:800;letter-spacing:.18em;font-size:1rem;color:#fff}
+.brand em{font-style:normal;color:var(--gold)}
+.logo{width:38px;height:38px;flex:0 0 auto;filter:drop-shadow(0 0 10px rgba(251,191,36,.45))}
 nav a{color:var(--cyan);text-decoration:none;margin-left:18px;font-weight:600;font-size:.95rem}
 nav a:hover{text-decoration:underline}
 .hero{text-align:center;padding:64px 22px 46px;margin:8px 0 34px;position:relative;
@@ -3975,7 +3976,15 @@ footer a:hover{text-decoration:underline}
 <body>
 <div class="wrap">
   <div class="topbar">
-    <div class="brand">MUSE <em>ARENA</em></div>
+    <div class="brand"><svg class="logo" viewBox="0 0 48 48" aria-hidden="true">
+<defs><radialGradient id="lg-chip" cx="35%" cy="30%" r="80%">
+<stop offset="0%" stop-color="#ffe9a8"/><stop offset="55%" stop-color="#f5b324"/><stop offset="100%" stop-color="#b45309"/>
+</radialGradient></defs>
+<circle cx="24" cy="24" r="22" fill="url(#lg-chip)"/>
+<circle cx="24" cy="24" r="18.5" fill="none" stroke="#fdf6e3" stroke-width="4.5" stroke-dasharray="7.28 7.28"/>
+<circle cx="24" cy="24" r="14.5" fill="#141d33" stroke="#fbbf24" stroke-width="1.5"/>
+<text x="24" y="30.5" text-anchor="middle" font-size="17" font-weight="800" fill="#fbbf24" font-family="-apple-system,'Segoe UI',Roboto,sans-serif">M</text>
+</svg><span>MUSE&nbsp;<em>ARENA</em></span></div>
     <nav><a href="/play">Play</a><a href="/watch">Watch</a></nav>
   </div>
 
