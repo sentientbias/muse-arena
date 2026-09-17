@@ -56,6 +56,15 @@ RATE_LIMIT_PER_MIN = 60
 def now():
     return int(time.time())
 
+def week_bounds_utc(ts):
+    """Calendar week containing ts: Monday 00:00 UTC -> +7 days (epoch)."""
+    import datetime
+    d = datetime.datetime.fromtimestamp(ts, datetime.timezone.utc)
+    monday = (d - datetime.timedelta(days=d.weekday())).replace(
+        hour=0, minute=0, second=0, microsecond=0)
+    start = int(monday.timestamp())
+    return start, start + 7 * 86400
+
 def clean_text(s, limit):
     s = (s or "").strip()
     s = re.sub(r"\s+", " ", s)
@@ -415,6 +424,14 @@ class Arena:
             self.db.executescript(SCHEMA)
             self.db.commit()
             self.IntegrityError = sqlite3.IntegrityError
+        # weekly leaderboard bookkeeping: finished_at on board_games.
+        # Pure observability (never affects game outcomes); backfills old rows.
+        try:
+            self._q("ALTER TABLE board_games ADD COLUMN finished_at INTEGER")
+        except Exception:
+            pass  # already migrated
+        self._q("UPDATE board_games SET finished_at=created_at "
+                "WHERE status='finished' AND finished_at IS NULL")
         # v1.5: seed the single tournament row (idempotent — only when missing)
         if not self._row("SELECT id FROM tournament WHERE id=1"):
             self._q("INSERT INTO tournament (id, status, created_at)"
@@ -903,8 +920,8 @@ class Arena:
 
     def _finish_board_game(self, game_id, state, players, winner_id, draw):
         self._q("UPDATE board_games SET state_json=?, status='finished',"
-                " winner_id=? WHERE id=?",
-                (json.dumps(state), winner_id, game_id))
+                " winner_id=?, finished_at=? WHERE id=?",
+                (json.dumps(state), winner_id, now(), game_id))
         if draw:
             for pid in players:
                 self._q("UPDATE players SET score=score+? WHERE id=?",
@@ -1355,6 +1372,39 @@ class Arena:
             rows = self._rows("SELECT name, score FROM players ORDER BY score DESC LIMIT 25")
         return [{"name": r["name"], "score": r["score"]} for r in rows]
 
+    def weekly_leaderboard(self):
+        """Read-only: wins/points per player for the current calendar week
+        (Monday 00:00 UTC). Champion = most wins, tiebreak = most points."""
+        import datetime
+        wk_start, wk_end = week_bounds_utc(now())
+        games = self._rows(
+            "SELECT winner_id, players_json FROM board_games "
+            "WHERE status='finished' AND finished_at IS NOT NULL "
+            "AND finished_at>=? AND finished_at<?",
+            (wk_start, wk_end))
+        agg = {}
+        for g in games:
+            wid = g["winner_id"]
+            if wid:
+                nm = self._player_name(wid)
+                e = agg.setdefault(nm, {"player": nm, "wins": 0, "points": 0})
+                e["wins"] += 1
+                e["points"] += WIN_POINTS
+            else:
+                for pid in json.loads(g["players_json"]):
+                    nm = self._player_name(pid)
+                    e = agg.setdefault(nm, {"player": nm, "wins": 0, "points": 0})
+                    e["points"] += DRAW_POINTS
+        standings = sorted(agg.values(),
+                           key=lambda e: (-e["wins"], -e["points"], e["player"]))
+        champ = standings[0] if standings and standings[0]["wins"] > 0 else None
+        fmt = lambda ts: datetime.datetime.fromtimestamp(
+            ts, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return {"week_start": fmt(wk_start), "week_end": fmt(wk_end),
+                "standings": standings,
+                "champion": ({"player": champ["player"], "wins": champ["wins"]}
+                             if champ else None)}
+
     # -- spectator ---------------------------------------------
     def spectate(self):
         """Public read-only snapshot of the action — no token needed."""
@@ -1387,14 +1437,18 @@ class Arena:
         boards = []
         for g in self._rows("SELECT id, room_id FROM board_games "
                             "ORDER BY created_at DESC LIMIT 10"):
-            st = self.board_game_state(g["id"])
+            try:
+                st = self.board_game_state(g["id"])
+            except Exception:
+                continue  # never let one malformed row kill the whole page
             room = self._row("SELECT name FROM rooms WHERE id=?", (g["room_id"],))
             st["room_name"] = room["name"] if room else "?"
             boards.append(st)
         return {"t": now(), "rooms": rooms, "stories": stories,
                 "trivia": games, "boards": boards,
                 "tournament": self.tournament_info(),
-                "leaderboard": self.leaderboard()}
+                "leaderboard": self.leaderboard(),
+                "weekly": self.weekly_leaderboard()}
 
 # ---------------------------------------------------------------- spectator page
 
@@ -1515,6 +1569,11 @@ details.collapsible summary{cursor:pointer;font-size:1.05rem;font-weight:700;let
 .sentence{padding:9px 0;border-top:1px solid #1a2440}
 .by{color:#79c0ff;font-size:.8rem}.votes{color:var(--gold);font-size:.8rem;margin-left:8px}
 .q{font-weight:600;margin:10px 0 4px}.choices{color:var(--mut);font-size:.9rem}
+.htag{display:inline-block;font-size:.7rem;font-weight:800;letter-spacing:.08em;color:#0a0f1c;
+background:var(--gold);border-radius:999px;padding:3px 10px;margin-left:8px;vertical-align:2px}
+.champ{margin:4px 0 12px;padding:12px 14px;border-radius:12px;font-weight:700;font-size:.92rem;
+background:linear-gradient(135deg,#3a2c07,#6b4e0c);border:1px solid var(--gold);
+box-shadow:0 0 26px rgba(251,191,36,.18)}
 footer{margin-top:40px;text-align:center;color:var(--mut);font-size:.78rem}
 footer a{color:var(--cyan);text-decoration:none}
 </style>
@@ -1547,6 +1606,7 @@ footer a{color:var(--cyan);text-decoration:none}
       <details class="collapsible"><summary>🧠 Trivia Gauntlet</summary><div id="trivia"></div></details>
     </main>
     <aside>
+      <section class="panel"><h2>📅 This Week's Board <span class="htag">#ArenaChamp</span></h2><div id="champ"></div><div id="weekly"><div class="empty">loading…</div></div></section>
       <section class="panel"><h2>🏆 Leaderboard</h2><div id="leaderboard"><div class="empty">loading…</div></div></section>
       <section class="panel"><h2>🏠 Rooms</h2><div id="rooms"><div class="empty">loading…</div></div></section>
     </aside>
@@ -1656,6 +1716,18 @@ function renderResults(d){
     items.push('<div class="feed-row"><div>'+kindIcon(g.kind)+" "+vs+" — "+res+
       '</div><div class="meta">'+esc(g.room_name||"")+"</div></div>");});
   el.innerHTML=items.length?items.join(""):'<div class="empty">no finished games yet.</div>';}
+function renderWeekly(d){
+  var w=d.weekly,el=document.getElementById("weekly"),ch=document.getElementById("champ");
+  if(!w){el.innerHTML='<div class="empty">loading…</div>';ch.innerHTML="";return;}
+  if(w.champion){
+    ch.innerHTML='<div class="champ">👑 '+esc(w.champion.player)+" leads the week — "+
+      w.champion.wins+' win'+(w.champion.wins===1?"":"s")+' <span class="htag">#ArenaChamp</span></div>';
+  }else ch.innerHTML="";
+  if(!w.standings.length){el.innerHTML='<div class="empty">no wins this week yet — be the first.</div>';return;}
+  el.innerHTML=w.standings.slice(0,10).map(function(p,i){
+    return '<div class="score-row"><span>'+(i+1)+". "+esc(p.player)+'</span><span class="pts">'+
+      p.wins+'W · '+p.points+' pts</span></div>';}).join("");
+}
 function renderLeaderboard(d){
   var el=document.getElementById("leaderboard"),medals=["🥇","🥈","🥉"];
   if(!d.leaderboard.length){el.innerHTML='<div class="empty">no scores yet.</div>';return;}
@@ -1697,7 +1769,7 @@ async function load(){
     var r=await fetch("/api/spectate");var d=await r.json();
     document.getElementById("updated").textContent="updated "+timeAgo(d.t)+" · auto-refresh 15s";
     renderPot(d.tournament);renderBoards(d);renderResults(d);
-    renderLeaderboard(d);renderRooms(d);renderStories(d);renderTrivia(d);
+    renderLeaderboard(d);renderWeekly(d);renderRooms(d);renderStories(d);renderTrivia(d);
   }catch(e){
     document.getElementById("updated").textContent="refresh failed — retrying…";
   }
@@ -1739,6 +1811,7 @@ ROUTES = [
     ("POST", r"^/api/tournament/enter$", "h_tournament_enter"),
     ("GET",  r"^/api/tournament$", "h_tournament"),
     ("GET",  r"^/api/leaderboard$", "h_leaderboard"),
+    ("GET",  r"^/api/weekly$", "h_weekly"),
     ("GET",  r"^/api/spectate$", "h_spectate"),
     ("GET",  r"^/watch$", "h_watch"),
     ("GET",  r"^/$", "h_index"),
@@ -2117,6 +2190,10 @@ class Handler(BaseHTTPRequestHandler):
         self._authed(body, qs)
         rid = qs.get("room_id", [None])[0]
         return {"leaderboard": self.arena.leaderboard(int(rid) if rid else None)}
+
+    def h_weekly(self, body, qs):
+        # public: weekly wins board, no token needed (same as /api/spectate)
+        return self.arena.weekly_leaderboard()
 
     def h_spectate(self, body, qs):
         # public: humans spectate without a muse token
