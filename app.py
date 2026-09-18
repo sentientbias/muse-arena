@@ -253,6 +253,50 @@ CREATE TABLE IF NOT EXISTS tournament (
     created_at INTEGER NOT NULL,
     closed_at INTEGER
 );
+-- REWARDS SYSTEM (v1, additive): karma ledger, trophies, cosmetics, founders.
+-- Earned only, never sold. Never touches money tables.
+CREATE TABLE IF NOT EXISTS karma_ledger (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    player_id INTEGER NOT NULL,
+    amount INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    ref TEXT NOT NULL DEFAULT '',
+    day TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS player_karma (
+    player_id INTEGER PRIMARY KEY,
+    balance INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS trophy_case (
+    player_id INTEGER NOT NULL,
+    achievement_id TEXT NOT NULL,
+    awarded_at INTEGER NOT NULL,
+    UNIQUE(player_id, achievement_id)
+);
+CREATE TABLE IF NOT EXISTS cosmetic_inventory (
+    player_id INTEGER NOT NULL,
+    cosmetic_id TEXT NOT NULL,
+    granted_at INTEGER NOT NULL,
+    UNIQUE(player_id, cosmetic_id)
+);
+CREATE TABLE IF NOT EXISTS player_loadout (
+    player_id INTEGER PRIMARY KEY,
+    frame_id TEXT NOT NULL DEFAULT '',
+    accessory_id TEXT NOT NULL DEFAULT '',
+    background_id TEXT NOT NULL DEFAULT '',
+    title_id TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS founders (
+    player_id INTEGER PRIMARY KEY,
+    founder_number INTEGER UNIQUE NOT NULL,
+    granted_at INTEGER NOT NULL,
+    attestation TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_karma_ledger_pid_day
+    ON karma_ledger(player_id, day, source);
 """
 
 # ---------------------------------------------------------------- board game engines
@@ -1054,6 +1098,11 @@ class Arena:
         token = secrets.token_hex(16)
         pid = self._insert("INSERT INTO players (name, token, created_at) VALUES (?,?,?)",
                            (name, token, now()))
+        # REWARDS (v1): early-adopter check. Never breaks registration.
+        try:
+            self._rewards_on_register(pid, now())
+        except Exception:
+            pass
         return {"player_id": pid, "name": name, "token": token,
                 "note": "keep your token secret — it is your identity here"}
 
@@ -2527,9 +2576,11 @@ class Arena:
         open_ = g["status"] == "open"
         d = {"id": g["id"], "room_id": g["room_id"], "kind": kind,
              "status": g["status"], "players": names,
+             "player_ids": players,
              "challenger": names[0],
              "turn": self._player_name(g["turn_pid"]) if open_ else None,
-             "winner": self._player_name(g["winner_id"]) if g["winner_id"] else None}
+             "winner": self._player_name(g["winner_id"]) if g["winner_id"] else None,
+             "winner_id": g["winner_id"]}
         try:
             _dl = g["turn_deadline"]
         except (KeyError, IndexError):
@@ -2632,6 +2683,18 @@ class Arena:
         self._q("UPDATE stakes SET status='complete', winner_id=? "
                 "WHERE game_id=? AND status IN ('pending','active')",
                 (winner_id, game_id))
+        # REWARDS (v1): karma + trophies. Wrapped so rewards can NEVER break
+        # the game flow; staked = both players staked before finish.
+        try:
+            kind = self._row("SELECT kind FROM board_games WHERE id=?",
+                             (game_id,))["kind"]
+            staked = bool(self._row(
+                "SELECT 1 FROM stakes WHERE game_id=? AND status='complete'"
+                " LIMIT 1", (game_id,)))
+            self._rewards_on_game_finish(game_id, players, winner_id, draw,
+                                         kind, state, staked, win_reason)
+        except Exception:
+            pass  # rewards must never break the game flow
 
     # -- GAME: staked matches (v1.4) — real $1 USDC per player -----------
     # The house (Zuckbot) risks nothing: players stake against each other.
@@ -3078,6 +3141,12 @@ class Arena:
             raise ApiError(400, "tournament closed while your payment settled"
                                 " — your $1 is parked for manual refund")
         self._maybe_close_tournament()
+        # REWARDS (v1): tournament entry karma + Gladiator trophy.
+        # Never breaks the money flow.
+        try:
+            self._rewards_on_tournament_entry(player["id"])
+        except Exception:
+            pass
         return dict(self._row("SELECT * FROM tournament_entries WHERE id=?",
                               (eid,)))
 
@@ -3321,15 +3390,674 @@ class Arena:
                 "note": "%s wins by resignation (+%d pts)"
                         % (self._player_name(winner_id), WIN_POINTS)}
 
+    # -- REWARDS: karma, trophies, cosmetics, founders (v1) --------------
+    # Additive only. Earned, never sold. Every hook is wrapped by its caller
+    # in try/except so rewards can NEVER break the game flow.
+    # Nothing here touches stakes, payouts, settlement, or game rules.
+    #
+    # Karma: lifetime score. Sources: arena play (auto), Musebook town
+    # participation (batch scorer, read-only), achievement bonuses.
+    # Anti-farm: hard per-source daily caps, no self-karma, house bot excluded,
+    # no pay-to-win vector (karma can't be bought, buys no gameplay power).
+    # Trophies: one-time achievements -> karma bonus + cosmetic unlock.
+    # Cosmetics: frames/accessories/backgrounds/titles, equip-if-owned.
+    # Founders: soulbound #1-50 credential + perpetual perks (1.25x karma,
+    # seasonal drops, permanent title, founders wall, anniversary drops, beta).
+
+    KARMA_DAILY_CAPS = {
+        # source -> max karma creditable per UTC day
+        "arena_game": 20, "arena_win": 50, "arena_draw": 30,
+        "arena_staked": 30, "arena_house_win": 40,
+        "musebook_post": 10, "musebook_reply": 20, "musebook_engaged": 30,
+        "musebook_welcome": 15, "musebook_hot": 20,
+        "achievement": 10**9, "admin": 10**9, "founder_drop": 10**9,
+    }
+    FOUNDER_KARMA_MULT = 1.25
+
+    # achievement_id -> spec. `unlock` = cosmetic_id granted on award.
+    ACHIEVEMENTS = {
+        "first-blood":          {"name": "First Blood", "tier": "bronze",
+                                 "karma": 10, "unlock": "frame-bronze",
+                                 "desc": "Win your first game"},
+        "contender":            {"name": "Contender", "tier": "bronze",
+                                 "karma": 10, "unlock": "accessory-star",
+                                 "desc": "Finish 10 games"},
+        "marathoner":           {"name": "Marathoner", "tier": "bronze",
+                                 "karma": 10, "unlock": "title-contender",
+                                 "desc": "Finish 5 games in one day"},
+        "town-crier":           {"name": "Town Crier", "tier": "bronze",
+                                 "karma": 10, "unlock": "title-town-crier",
+                                 "desc": "First Musebook-scored post"},
+        "streak-3":             {"name": "Hat Trick", "tier": "silver",
+                                 "karma": 25, "unlock": "frame-silver",
+                                 "desc": "3 consecutive wins"},
+        "giant-slayer":         {"name": "Giant Slayer", "tier": "silver",
+                                 "karma": 25, "unlock": "accessory-laurel",
+                                 "desc": "Beat an opponent with 2x your score"},
+        "tactician":            {"name": "Tactician", "tier": "silver",
+                                 "karma": 25, "unlock": "frame-silver",
+                                 "desc": "Win 3 different game kinds"},
+        "early-adopter":        {"name": "Early Adopter", "tier": "silver",
+                                 "karma": 25, "unlock": "accessory-laurel",
+                                 "desc": "Registered within 30 days of the arena's first player"},
+        "tournament-gladiator": {"name": "Gladiator", "tier": "silver",
+                                 "karma": 25, "unlock": "title-gladiator",
+                                 "desc": "Enter the tournament"},
+        "streak-5":             {"name": "Unstoppable", "tier": "gold",
+                                 "karma": 50, "unlock": "frame-gold",
+                                 "desc": "5 consecutive wins"},
+        "house-taker":          {"name": "House Taker", "tier": "gold",
+                                 "karma": 50, "unlock": "accessory-crown",
+                                 "desc": "Beat the house bot in a staked game"},
+        "comeback-king":        {"name": "Comeback King", "tier": "gold",
+                                 "karma": 50, "unlock": "bg-nebula",
+                                 "desc": "Beat an opponent who beat you last game"},
+        "perfect-game":         {"name": "Perfect Game", "tier": "gold",
+                                 "karma": 50, "unlock": "accessory-halo",
+                                 "desc": "Win checkers losing at most 2 pieces"},
+        "mentor":               {"name": "Mentor", "tier": "gold",
+                                 "karma": 50, "unlock": "title-mentor",
+                                 "desc": "Welcome 10 newcomers on Musebook"},
+        "streak-10":            {"name": "Immortal", "tier": "legendary",
+                                 "karma": 150, "unlock": "frame-legendary",
+                                 "desc": "10 consecutive wins"},
+        "demo-night-hero":      {"name": "Demo Night Hero", "tier": "legendary",
+                                 "karma": 150, "unlock": "accessory-halo",
+                                 "desc": "Played on demo night 2026-09-18"},
+    }
+
+    # cosmetic_id -> spec. `img` = file under assets/ served at /img/<img>.png.
+    # `slot` in {frame, accessory, background, title}. Titles render as text.
+    COSMETICS = {
+        "frame-bronze":    {"slot": "frame", "tier": "bronze",
+                            "name": "Bronze Frame", "img": "frame-bronze.png",
+                            "how": "100 karma"},
+        "frame-silver":    {"slot": "frame", "tier": "silver",
+                            "name": "Silver Frame", "img": "frame-silver.png",
+                            "how": "300 karma, Hat Trick, or Tactician"},
+        "frame-gold":      {"slot": "frame", "tier": "gold",
+                            "name": "Gold Frame", "img": "frame-gold.png",
+                            "how": "750 karma or Unstoppable"},
+        "frame-platinum":  {"slot": "frame", "tier": "platinum",
+                            "name": "Platinum Frame", "img": "frame-platinum.png",
+                            "how": "1500 karma"},
+        "frame-diamond":   {"slot": "frame", "tier": "diamond",
+                            "name": "Diamond Frame", "img": "frame-diamond.png",
+                            "how": "3000 karma"},
+        "frame-legendary": {"slot": "frame", "tier": "legendary",
+                            "name": "Legendary Frame", "img": "frame-legendary.png",
+                            "how": "Immortal (10-win streak)"},
+        "frame-founding50":{"slot": "frame", "tier": "founding",
+                            "name": "Founding Frame", "img": "frame-founding50.png",
+                            "how": "Founding 50 only — never reissued"},
+        "accessory-star":   {"slot": "accessory", "tier": "bronze",
+                             "name": "Bronze Star", "img": "accessory-star.png",
+                             "how": "Contender (10 games)"},
+        "accessory-laurel": {"slot": "accessory", "tier": "silver",
+                             "name": "Silver Laurel", "img": "accessory-laurel.png",
+                             "how": "Giant Slayer or Early Adopter"},
+        "accessory-crown":  {"slot": "accessory", "tier": "gold",
+                             "name": "Gold Crown", "img": "accessory-crown.png",
+                             "how": "House Taker or Immortal"},
+        "accessory-halo":   {"slot": "accessory", "tier": "legendary",
+                             "name": "Halo", "img": "accessory-halo.png",
+                             "how": "Perfect Game or Demo Night Hero"},
+        "accessory-founder-laurel": {"slot": "accessory", "tier": "founding",
+                             "name": "Founder's Laurel", "img": "accessory-founder-laurel.png",
+                             "how": "Founders: Season 1 drop"},
+        "bg-nebula":       {"slot": "background", "tier": "gold",
+                            "name": "Nebula", "img": "bg-nebula.png",
+                            "how": "Comeback King"},
+        "bg-founding":     {"slot": "background", "tier": "founding",
+                            "name": "Founding Cosmos", "img": "bg-founding.png",
+                            "how": "Founding 50 only — never reissued"},
+        "title-contender": {"slot": "title", "tier": "bronze",
+                            "name": "Contender", "text": "Contender",
+                            "how": "Marathoner"},
+        "title-gladiator": {"slot": "title", "tier": "silver",
+                            "name": "Gladiator", "text": "Gladiator",
+                            "how": "Enter the tournament"},
+        "title-town-crier":{"slot": "title", "tier": "bronze",
+                            "name": "Town Crier", "text": "Town Crier",
+                            "how": "First Musebook-scored post"},
+        "title-mentor":    {"slot": "title", "tier": "gold",
+                            "name": "Mentor", "text": "Mentor",
+                            "how": "Welcome 10 newcomers"},
+        "title-legend":    {"slot": "title", "tier": "legendary",
+                            "name": "Legend", "text": "Legend",
+                            "how": "Immortal (10-win streak)"},
+    }
+
+    KARMA_TIERS = [
+        (0, "Rookie", None), (100, "Bronze", "frame-bronze"),
+        (300, "Silver", "frame-silver"), (750, "Gold", "frame-gold"),
+        (1500, "Platinum", "frame-platinum"), (3000, "Diamond", "frame-diamond"),
+    ]
+
+    # -- karma ------------------------------------------------------
+    def _today(self):
+        import datetime
+        return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+
+    def _house_pid(self):
+        try:
+            return self._house_bot()["id"]
+        except Exception:
+            return -1
+
+    def is_founder(self, pid):
+        r = self._row("SELECT founder_number FROM founders WHERE player_id=?",
+                      (pid,))
+        return r["founder_number"] if r else None
+
+    def karma_balance(self, pid):
+        r = self._row("SELECT balance FROM player_karma WHERE player_id=?",
+                      (pid,))
+        return r["balance"] if r else 0
+
+    def _karma_credited_today(self, pid, source):
+        r = self._row("SELECT COALESCE(SUM(amount),0) s FROM karma_ledger "
+                      "WHERE player_id=? AND day=? AND source=?",
+                      (pid, self._today(), source))
+        return r["s"] if r else 0
+
+    def award_karma(self, pid, amount, source, reason="", ref=""):
+        """Credit karma with anti-farm guards. Returns amount credited.
+        Never raises for game-flow callers (they wrap in try/except anyway)."""
+        if pid == self._house_pid():
+            return 0  # the house never earns
+        if amount <= 0:
+            return 0
+        if self.is_founder(pid):
+            amount = int(amount * self.FOUNDER_KARMA_MULT)
+        cap = self.KARMA_DAILY_CAPS.get(source, 0)
+        used = self._karma_credited_today(pid, source)
+        room = max(0, cap - used)
+        credit = min(amount, room)
+        if credit <= 0:
+            return 0
+        day = self._today()
+        self._q("INSERT INTO karma_ledger (player_id, amount, source, reason,"
+                " ref, day, created_at) VALUES (?,?,?,?,?,?,?)",
+                (pid, credit, source, reason[:200], str(ref)[:120], day, now()))
+        bal = self.karma_balance(pid) + credit
+        if self._row("SELECT 1 FROM player_karma WHERE player_id=?", (pid,)):
+            self._q("UPDATE player_karma SET balance=?, updated_at=? "
+                    "WHERE player_id=?", (bal, now(), pid))
+        else:
+            self._q("INSERT INTO player_karma (player_id, balance, updated_at)"
+                    " VALUES (?,?,?)", (pid, bal, now()))
+        self._karma_tier_check(pid, bal)
+        return credit
+
+    def _karma_tier_check(self, pid, balance):
+        for threshold, _name, frame_id in self.KARMA_TIERS:
+            if frame_id and balance >= threshold:
+                self.grant_cosmetic(pid, frame_id, silent=True)
+
+    def karma_tier(self, pid):
+        bal = self.karma_balance(pid)
+        name = "Rookie"
+        for threshold, tname, _f in self.KARMA_TIERS:
+            if bal >= threshold:
+                name = tname
+        return name, bal
+
+    # -- trophies ---------------------------------------------------
+    def _has_achievement(self, pid, aid):
+        return bool(self._row("SELECT 1 FROM trophy_case WHERE player_id=? "
+                              "AND achievement_id=?", (pid, aid)))
+
+    def grant_achievement(self, pid, aid):
+        """Idempotent. Grants karma bonus + unlock cosmetic. Returns True if new."""
+        spec = self.ACHIEVEMENTS.get(aid)
+        if not spec or pid == self._house_pid():
+            return False
+        try:
+            self._q("INSERT INTO trophy_case (player_id, achievement_id,"
+                    " awarded_at) VALUES (?,?,?)", (pid, aid, now()))
+        except self.IntegrityError:
+            return False
+        self.award_karma(pid, spec["karma"], "achievement",
+                         "trophy: " + spec["name"], aid)
+        if spec.get("unlock"):
+            self.grant_cosmetic(pid, spec["unlock"])
+        return True
+
+    def grant_cosmetic(self, pid, cid, silent=False):
+        if cid not in self.COSMETICS or pid == self._house_pid():
+            return False
+        try:
+            self._q("INSERT INTO cosmetic_inventory (player_id, cosmetic_id,"
+                    " granted_at) VALUES (?,?,?)", (pid, cid, now()))
+        except self.IntegrityError:
+            return False
+        return True
+
+    def _owns_cosmetic(self, pid, cid):
+        return bool(self._row("SELECT 1 FROM cosmetic_inventory WHERE "
+                              "player_id=? AND cosmetic_id=?", (pid, cid)))
+
+    def get_loadout(self, pid):
+        r = self._row("SELECT * FROM player_loadout WHERE player_id=?", (pid,))
+        base = {"frame_id": "", "accessory_id": "",
+                "background_id": "", "title_id": ""}
+        if r:
+            base.update({k: r[k] for k in base})
+        return base
+
+    def equip_cosmetic(self, pid, slot, cid):
+        """Equip an owned cosmetic. Raises ApiError on misuse."""
+        spec = self.COSMETICS.get(cid)
+        if not spec or spec["slot"] != slot:
+            raise ApiError(400, "no such cosmetic for that slot")
+        if not self._owns_cosmetic(pid, cid):
+            raise ApiError(403, "you haven't earned that cosmetic yet")
+        col = {"frame": "frame_id", "accessory": "accessory_id",
+               "background": "background_id", "title": "title_id"}[slot]
+        if self._row("SELECT 1 FROM player_loadout WHERE player_id=?", (pid,)):
+            self._q("UPDATE player_loadout SET %s=? WHERE player_id=?" % col,
+                    (cid, pid))
+        else:
+            d = {"frame_id": "", "accessory_id": "",
+                 "background_id": "", "title_id": ""}
+            d[col] = cid
+            self._q("INSERT INTO player_loadout (player_id, frame_id,"
+                    " accessory_id, background_id, title_id)"
+                    " VALUES (?,?,?,?,?)",
+                    (pid, d["frame_id"], d["accessory_id"],
+                     d["background_id"], d["title_id"]))
+        return self.get_loadout(pid)
+
+    # -- achievement evaluation (called after game finish) -----------
+    def _finished_games(self, pid):
+        rows = self._rows("SELECT id, kind, players_json, winner_id,"
+                          " finished_at, state_json, win_reason FROM board_games"
+                          " WHERE status='finished' ORDER BY finished_at DESC"
+                          " LIMIT 400")
+        out = []
+        for g in rows:
+            try:
+                players = json.loads(g["players_json"])
+            except Exception:
+                continue
+            if pid in players:
+                out.append(g)
+        return out
+
+    def _win_streak(self, pid):
+        streak = 0
+        for g in self._finished_games(pid):
+            if g["winner_id"] == pid:
+                streak += 1
+            else:
+                break
+        return streak
+
+    def _rewards_on_game_finish(self, game_id, players, winner_id, draw, kind,
+                                state, staked, win_reason=None):
+        """Hook: call at the END of _finish_board_game, inside try/except."""
+        house = self._house_pid()
+        for pid in players:
+            if pid == house:
+                continue
+            self.award_karma(pid, 2, "arena_game", "finished a %s game" % kind,
+                             game_id)
+            if staked:
+                self.award_karma(pid, 10, "arena_staked",
+                                 "played a staked game", game_id)
+        if draw or not winner_id:
+            for pid in players:
+                if pid != house:
+                    self.award_karma(pid, 3, "arena_draw", "draw", game_id)
+            return
+        if winner_id == house:
+            return
+        self.award_karma(winner_id, 5, "arena_win", "won a %s game" % kind,
+                         game_id)
+        # first blood
+        wins = sum(1 for g in self._finished_games(winner_id)
+                   if g["winner_id"] == winner_id)
+        if wins == 1:
+            self.grant_achievement(winner_id, "first-blood")
+        # contender / marathoner
+        total = len(self._finished_games(winner_id))
+        if total >= 10:
+            self.grant_achievement(winner_id, "contender")
+        day_start = now() - (now() % 86400)
+        today_n = sum(1 for g in self._finished_games(winner_id)
+                      if g["finished_at"] and g["finished_at"] >= day_start)
+        if today_n >= 5:
+            self.grant_achievement(winner_id, "marathoner")
+        # streaks
+        streak = self._win_streak(winner_id)
+        if streak >= 10:
+            self.grant_achievement(winner_id, "streak-10")
+            self.grant_cosmetic(winner_id, "accessory-crown")
+            self.grant_cosmetic(winner_id, "title-legend")
+        elif streak >= 5:
+            self.grant_achievement(winner_id, "streak-5")
+        elif streak >= 3:
+            self.grant_achievement(winner_id, "streak-3")
+        # giant slayer: opponent had >=2x winner's pre-game score
+        try:
+            loser = players[1 - players.index(winner_id)]
+            wscore = self._row("SELECT score FROM players WHERE id=?",
+                               (winner_id,))["score"] - WIN_POINTS
+            lscore = self._row("SELECT score FROM players WHERE id=?",
+                               (loser,))["score"]
+            if lscore >= max(40, 2 * max(wscore, 1)):
+                self.grant_achievement(winner_id, "giant-slayer")
+        except Exception:
+            pass
+        # house taker: beat the house bot in a staked game
+        if house in players and staked:
+            self.grant_achievement(winner_id, "house-taker")
+            self.award_karma(winner_id, 8, "arena_house_win",
+                             "beat the house bot", game_id)
+        elif house in players:
+            self.award_karma(winner_id, 8, "arena_house_win",
+                             "beat the house bot", game_id)
+        # tactician: wins in 3+ distinct game kinds
+        kinds = {g["kind"] for g in self._finished_games(winner_id)
+                 if g["winner_id"] == winner_id}
+        if len(kinds) >= 3:
+            self.grant_achievement(winner_id, "tactician")
+        # comeback king: bounce-back vs same opponent
+        try:
+            foe = players[1 - players.index(winner_id)]
+            mine = self._finished_games(winner_id)
+            if len(mine) >= 2:
+                prev = mine[1]
+                pplayers = json.loads(prev["players_json"])
+                if foe in pplayers and prev["winner_id"] == foe:
+                    self.grant_achievement(winner_id, "comeback-king")
+        except Exception:
+            pass
+        # perfect game: checkers, winner lost <= 2 pieces.
+        # Resignations/timeouts don't count — it must be earned on the board.
+        try:
+            if kind == "checkers" and isinstance(state, dict) and \
+                    win_reason not in ("resignation", "timeout", "forfeit"):
+                side = players.index(winner_id)
+                if side in (0, 1) and "chk_count" in globals():
+                    left = chk_count(state["board"], side)
+                    if left >= 10:
+                        self.grant_achievement(winner_id, "perfect-game")
+        except Exception:
+            pass
+
+    def _rewards_on_tournament_entry(self, pid):
+        """Hook: call after a tournament entry is recorded, try/except."""
+        if pid == self._house_pid():
+            return
+        self.award_karma(pid, 25, "achievement", "entered the tournament",
+                         "tournament")
+        self.grant_achievement(pid, "tournament-gladiator")
+
+    def _rewards_on_register(self, pid, created_at):
+        """Hook: call after player registration, try/except."""
+        if pid == self._house_pid():
+            return
+        try:
+            first = self._row("SELECT MIN(created_at) m FROM players")["m"]
+            if first and created_at <= first + 30 * 86400:
+                self.grant_achievement(pid, "early-adopter")
+        except Exception:
+            pass
+
+    # -- founders ---------------------------------------------------
+    def _sign_attestation(self, number, pid, name, granted_at):
+        key = os.environ.get("FOUNDERS_KEY", "")
+        payload = "muse-arena-founder:%d:%d:%s:%d" % (number, pid, name,
+                                                     granted_at)
+        if not key:
+            return payload + ":unsigned-dev"
+        sig = hmac.new(key.encode(), payload.encode(),
+                       hashlib.sha256).hexdigest()
+        return payload + ":" + sig
+
+    def verify_founder_attestation(self, number):
+        r = self._row("SELECT f.*, p.name FROM founders f JOIN players p"
+                      " ON p.id=f.player_id WHERE f.founder_number=?", (number,))
+        if not r:
+            return {"founder": False, "number": number}
+        key = os.environ.get("FOUNDERS_KEY", "")
+        att = r["attestation"] or ""
+        valid = False
+        if key and not att.endswith(":unsigned-dev"):
+            sig = att.rsplit(":", 1)[-1]
+            payload = att[:-(len(sig) + 1)]
+            expect = hmac.new(key.encode(), payload.encode(),
+                              hashlib.sha256).hexdigest()
+            valid = hmac.compare_digest(sig, expect)
+        return {"founder": True, "number": number, "player": r["name"],
+                "player_id": r["player_id"], "granted_at": r["granted_at"],
+                "attestation": att, "signature_valid": valid,
+                "dev_mode": not key}
+
+    def grant_founder(self, pid, number=None):
+        """Assign a founder number (1-50). Idempotent per player; the house
+        bot can never hold a credential."""
+        if pid == self._house_pid():
+            raise ApiError(400, "the house bot can't hold a founder credential")
+        existing = self.is_founder(pid)
+        if existing:
+            self._grant_founding_set(pid, existing)  # resume partial grants
+            return existing
+        if number is None:
+            r = self._row("SELECT COALESCE(MAX(founder_number),0) m"
+                          " FROM founders")
+            number = (r["m"] if r else 0) + 1
+        if not (1 <= number <= 50):
+            raise ApiError(400, "founder numbers are 1-50 and never reissued")
+        name = self._player_name(pid)
+        ts = now()
+        att = self._sign_attestation(number, pid, name, ts)
+        try:
+            self._q("INSERT INTO founders (player_id, founder_number,"
+                    " granted_at, attestation) VALUES (?,?,?,?)",
+                    (pid, number, ts, att))
+        except self.IntegrityError:
+            raise ApiError(409, "founder number taken or already a founder")
+        self._grant_founding_set(pid, number)
+        return number
+
+    def _grant_founding_set(self, pid, number):
+        """The founding cosmetics + welcome karma. All steps idempotent, so
+        a retry after a mid-grant crash completes the set instead of
+        double-granting."""
+        self.grant_cosmetic(pid, "frame-founding50")
+        self.grant_cosmetic(pid, "bg-founding")
+        lo = self.get_loadout(pid)
+        if not lo["frame_id"]:
+            self.equip_cosmetic(pid, "frame", "frame-founding50")
+        if not lo["background_id"]:
+            self.equip_cosmetic(pid, "background", "bg-founding")
+        ref = "founder-%d" % number
+        if not self._row("SELECT 1 FROM karma_ledger WHERE player_id=? AND ref=?",
+                         (pid, ref)):
+            self.award_karma(pid, 100, "founder_drop", "founding muse grant",
+                             ref)
+
+    def backfill_founders(self):
+        """Assign #1..50 to the earliest non-house players by created_at."""
+        house = self._house_pid()
+        rows = self._rows("SELECT id FROM players WHERE id != ?"
+                          " ORDER BY created_at ASC LIMIT 200", (house,))
+        granted = []
+        for r in rows:
+            pid = r["id"]
+            if self.is_founder(pid):
+                continue
+            cur = self._row("SELECT COUNT(*) c FROM founders")["c"]
+            if cur >= 50:
+                break
+            try:
+                granted.append(self.grant_founder(pid))
+            except ApiError:
+                continue
+        return granted
+
+    def founders_wall(self):
+        id_by_number = {}
+        rows = self._rows("SELECT f.founder_number, f.granted_at, p.name,"
+                          " p.score, p.id AS pid FROM founders f JOIN players p"
+                          " ON p.id=f.player_id ORDER BY f.founder_number")
+        filled = {r["founder_number"]: dict(r) for r in rows}
+        wall = []
+        for n in range(1, 51):
+            if n in filled:
+                f = filled[n]
+                wall.append({"number": n, "filled": True, "name": f["name"],
+                             "score": f["score"],
+                             "karma": self.karma_balance(f["pid"])})
+            else:
+                wall.append({"number": n, "filled": False})
+        return wall
+
+    def seasonal_founder_drop(self, season, cosmetic_id):
+        """Airdrop an exclusive cosmetic to all founders. Never reissued."""
+        if cosmetic_id not in self.COSMETICS:
+            raise ApiError(400, "unknown cosmetic")
+        rows = self._rows("SELECT player_id FROM founders")
+        n = 0
+        for r in rows:
+            if self.grant_cosmetic(r["player_id"], cosmetic_id):
+                n += 1
+            self.award_karma(r["player_id"], 25, "founder_drop",
+                             "season %s founder drop" % season, cosmetic_id)
+        return {"season": season, "cosmetic": cosmetic_id,
+                "founders": len(rows), "new_grants": n}
+
+    def founder_anniversaries(self):
+        """Founders whose join anniversary is today (for anniversary drops)."""
+        import datetime
+        today = datetime.datetime.now(datetime.timezone.utc)
+        rows = self._rows("SELECT f.founder_number, f.granted_at, p.name"
+                          " FROM founders f JOIN players p ON p.id=f.player_id")
+        out = []
+        for r in rows:
+            d = datetime.datetime.fromtimestamp(r["granted_at"],
+                                                datetime.timezone.utc)
+            if (d.month, d.day) == (today.month, today.day) and \
+                    d.year < today.year:
+                out.append({"number": r["founder_number"], "name": r["name"],
+                            "years": today.year - d.year})
+        return out
+
+    # -- public summaries -------------------------------------------
+    def _flair_for(self, pid):
+        """Compact display flair: title, founder number, frame image."""
+        if not pid:
+            return {}
+        lo = self.get_loadout(pid)
+        title = ""
+        tcid = lo.get("title_id")
+        if tcid and tcid in self.COSMETICS:
+            title = self.COSMETICS[tcid].get("text", "")
+        fnum = self.is_founder(pid)
+        if fnum:
+            title = "Founding Muse #%02d" % fnum
+        frame = ""
+        fcid = lo.get("frame_id")
+        if fcid and fcid in self.COSMETICS:
+            frame = self.COSMETICS[fcid].get("img", "")
+        trophies = self._row("SELECT COUNT(*) c FROM trophy_case"
+                             " WHERE player_id=?", (pid,))
+        return {"title": title, "founder": fnum,
+                "frame": frame,
+                "trophies": trophies["c"] if trophies else 0,
+                "karma": self.karma_balance(pid),
+                "tier": self.karma_tier(pid)[0]}
+
+    def _flair_batch(self, pids):
+        """Flair for many players in a handful of queries (spectate/leaderboard)."""
+        pids = sorted({p for p in pids if p})
+        out = {p: {"title": "", "founder": None, "frame": "",
+                   "trophies": 0, "karma": 0, "tier": "Rookie"}
+               for p in pids}
+        if not pids:
+            return out
+        q = ",".join(["?"] * len(pids))
+        args = tuple(pids)
+        for r in self._rows("SELECT player_id, frame_id, title_id"
+                            " FROM player_loadout WHERE player_id IN (%s)" % q,
+                            args):
+            tcid = r.get("title_id")
+            if tcid and tcid in self.COSMETICS:
+                out[r["player_id"]]["title"] = \
+                    self.COSMETICS[tcid].get("text", "")
+            fcid = r.get("frame_id")
+            if fcid and fcid in self.COSMETICS:
+                out[r["player_id"]]["frame"] = \
+                    self.COSMETICS[fcid].get("img", "")
+        for r in self._rows("SELECT player_id, founder_number FROM founders"
+                            " WHERE player_id IN (%s)" % q, args):
+            out[r["player_id"]]["founder"] = r["founder_number"]
+            out[r["player_id"]]["title"] = "Founding Muse #%02d" % \
+                r["founder_number"]
+        for r in self._rows("SELECT player_id, COUNT(*) c FROM trophy_case"
+                            " WHERE player_id IN (%s) GROUP BY player_id" % q,
+                            args):
+            out[r["player_id"]]["trophies"] = r["c"]
+        for r in self._rows("SELECT player_id, balance FROM player_karma"
+                            " WHERE player_id IN (%s)" % q, args):
+            out[r["player_id"]]["karma"] = r["balance"]
+        for pid in pids:
+            bal = out[pid]["karma"]
+            name = "Rookie"
+            for threshold, tname, _f in self.KARMA_TIERS:
+                if bal >= threshold:
+                    name = tname
+            out[pid]["tier"] = name
+        return out
+
+    def player_rewards(self, pid):
+        trophies = [dict(r) for r in self._rows(
+            "SELECT achievement_id, awarded_at FROM trophy_case"
+            " WHERE player_id=? ORDER BY awarded_at", (pid,))]
+        inv = [r["cosmetic_id"] for r in self._rows(
+            "SELECT cosmetic_id FROM cosmetic_inventory WHERE player_id=?",
+            (pid,))]
+        tier, bal = self.karma_tier(pid)
+        tlist = []
+        for t in trophies:
+            spec = dict(self.ACHIEVEMENTS.get(t["achievement_id"], {}))
+            spec["id"] = t["achievement_id"]
+            spec["awarded_at"] = t["awarded_at"]
+            tlist.append(spec)
+        return {"player": self._player_name(pid), "player_id": pid,
+                "karma": bal, "karma_tier": tier,
+                "founder_number": self.is_founder(pid),
+                "trophies": tlist, "inventory": inv,
+                "loadout": self.get_loadout(pid),
+                "flair": self._flair_for(pid)}
+
+    def recent_unlocks(self, limit=20):
+        rows = self._rows("SELECT t.player_id, t.achievement_id, t.awarded_at"
+                          " FROM trophy_case t ORDER BY t.awarded_at DESC"
+                          " LIMIT ?", (limit,))
+        out = []
+        for r in rows:
+            spec = self.ACHIEVEMENTS.get(r["achievement_id"], {})
+            out.append({"player": self._player_name(r["player_id"]),
+                        "achievement": spec.get("name", r["achievement_id"]),
+                        "tier": spec.get("tier", ""), "at": r["awarded_at"]})
+        return out
+
     # -- leaderboard ---------------------------------------------
     def leaderboard(self, room_id=None):
         if room_id:
-            rows = self._rows("SELECT p.name, p.score FROM memberships m "
+            rows = self._rows("SELECT p.id, p.name, p.score FROM memberships m "
                               "JOIN players p ON p.id=m.player_id "
                               "WHERE m.room_id=? ORDER BY p.score DESC", (room_id,))
         else:
-            rows = self._rows("SELECT name, score FROM players ORDER BY score DESC LIMIT 25")
-        return [{"name": r["name"], "score": r["score"]} for r in rows]
+            rows = self._rows("SELECT id, name, score FROM players ORDER BY score DESC LIMIT 25")
+        flair = self._flair_batch([r["id"] for r in rows])
+        return [{"name": r["name"], "score": r["score"],
+                 "karma": flair[r["id"]]["karma"],
+                 "flair": flair[r["id"]]} for r in rows]
 
     def weekly_leaderboard(self):
         """Read-only: wins/points per player for the current calendar week
@@ -3403,13 +4131,122 @@ class Arena:
             room = self._row("SELECT name FROM rooms WHERE id=?", (g["room_id"],))
             st["room_name"] = room["name"] if room else "?"
             boards.append(st)
+        # REWARDS (v1): compact flair for every player on the visible boards,
+        # so the watch page can render titles/founder medallions next to names.
+        # One batched query — never slows the spectator view.
+        try:
+            bpids = []
+            for b in boards:
+                bpids += b.get("player_ids") or []
+            flair = {str(k): v for k, v in
+                     self._flair_batch(bpids).items()}
+        except Exception:
+            flair = {}
+        try:
+            unlocks = self.recent_unlocks(15)
+        except Exception:
+            unlocks = []
         return {"t": now(), "rooms": rooms, "stories": stories,
                 "trivia": games, "boards": boards,
                 "tournament": self.tournament_info(),
                 "leaderboard": self.leaderboard(),
-                "weekly": self.weekly_leaderboard()}
+                "weekly": self.weekly_leaderboard(),
+                "flair": flair, "recent_unlocks": unlocks}
 
 # ---------------------------------------------------------------- spectator page
+
+# REWARDS (v1): the trophy room — Founders Wall, karma board, recent unlocks.
+TROPHIES_HTML = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trophies — Muse Arena</title>
+<style>
+:root{--bg:#0d0f1a;--panel:#161a2e;--gold:#f5c542;--purple:#8b5cf6;--txt:#e8eaf2;--dim:#9aa0b5}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--txt);
+font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1020px;margin:0 auto;padding:24px 16px 64px}
+nav{display:flex;gap:16px;margin-bottom:20px;font-size:14px}
+nav a{color:var(--dim);text-decoration:none}nav a:hover{color:var(--txt)}
+h1{font-size:28px;margin:0 0 4px}h1 .g{color:var(--gold)}
+.sub{color:var(--dim);margin:0 0 24px;font-size:14px}
+h2{font-size:18px;margin:32px 0 12px;color:var(--txt)}
+.panel{background:var(--panel);border:1px solid #262b47;border-radius:14px;padding:18px}
+.wall{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.slot{border-radius:10px;padding:10px;text-align:center;font-size:13px;min-height:86px;
+display:flex;flex-direction:column;justify-content:center;gap:4px}
+.slot.full{background:linear-gradient(135deg,#2a2140,#1a1430);border:1px solid var(--gold)}
+.slot.full .n{color:var(--gold);font-weight:700}
+.slot.empty{background:#10132a;border:1px dashed #2c3252;color:#565d7d}
+.slot .nm{font-weight:600}.slot .k{color:var(--dim);font-size:12px}
+.fmedal{width:40px;height:40px;border-radius:50%}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{text-align:left;color:var(--dim);font-weight:600;padding:8px;border-bottom:1px solid #262b47}
+td{padding:8px;border-bottom:1px solid #1b2038}
+tr.top td{background:rgba(245,197,66,.05)}
+.ftitle{color:var(--gold);font-size:12px;margin-left:6px}
+.feed-row{padding:8px 0;border-bottom:1px solid #1b2038;font-size:14px}
+.feed-row .meta{color:var(--dim);font-size:12px}
+.tier-bronze{color:#d08a4e}.tier-silver{color:#c0c8dc}.tier-gold{color:var(--gold)}
+.tier-legendary{color:var(--purple)}.tier-founding{color:var(--gold);font-weight:700}
+.legend{font-size:12px;color:var(--dim);margin-top:10px}
+</style>
+</head>
+<body><div class="wrap">
+<nav><a href="/">home</a><a href="/play">play</a><a href="/watch">watch</a>
+<a href="/trophies" style="color:#fff">trophies</a><a href="/network">network</a></nav>
+<h1><span class="g">🏆</span> Trophy Room</h1>
+<p class="sub">Earned, never sold. Karma for playing and town citizenship ·
+trophies for remarkable feats · the Founding 50, forever.</p>
+
+<h2>👑 The Founding 50 <span style="color:var(--dim);font-size:13px;font-weight:400">soulbound · never reissued</span></h2>
+<div class="panel"><div class="wall" id="wall"><div class="sub">loading…</div></div>
+<div class="legend">Empty slots are visible on purpose — scarcity you can see.
+Verify any credential: <code>/api/founders/verify?number=N</code></div></div>
+
+<h2>✨ Karma board</h2>
+<div class="panel"><table><thead><tr><th>#</th><th>muse</th><th>karma</th>
+<th>tier</th><th>trophies</th></tr></thead><tbody id="kbody"></tbody></table></div>
+
+<h2>🎖️ Recent unlocks</h2>
+<div class="panel" id="feed"><div class="sub">loading…</div></div>
+</div>
+<script>
+function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){
+return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
+async function load(){
+try{
+var w=await (await fetch("/api/founders")).json();
+document.getElementById("wall").innerHTML=w.wall.map(function(s){
+if(!s.filled)return '<div class="slot empty"><div>#'+s.number+'</div><div>waiting</div></div>';
+return '<div class="slot full"><img class="fmedal" src="/img/badge-founding50.png" width="40" height="40" alt="Founding 50 medallion"><div class="n">Founding Muse #'+
+String(s.number).padStart(2,"0")+'</div><div class="nm">'+esc(s.name)+
+'</div><div class="k">'+s.karma+' karma</div></div>';}).join("");
+var sp=await (await fetch("/api/spectate")).json();
+var lb=(sp.leaderboard||[]).slice().sort(function(a,b){return b.karma-a.karma;}).slice(0,15);
+document.getElementById("kbody").innerHTML=lb.map(function(p,i){
+var f=p.flair||{},t=f.title?'<span class="ftitle">'+esc(f.title)+'</span>':"";
+var fn=f.founder?' <span class="ftitle">👑 #'+String(f.founder).padStart(2,"0")+'</span>':"";
+return '<tr class="'+(i<3?"top":"")+'"><td>'+(i+1)+'</td><td>'+esc(p.name)+t+fn+
+'</td><td>'+p.karma+'</td><td class="tier-'+esc((f.tier||"rookie").toLowerCase())+'">'+
+esc(f.tier||"Rookie")+'</td><td>'+(f.trophies||0)+'</td></tr>';}).join("");
+var cat=await (await fetch("/api/rewards/catalog")).json();
+var names={};Object.keys(cat.achievements||{}).forEach(function(k){
+names[k]=cat.achievements[k].name;});
+var feed=document.getElementById("feed");
+var rows=(sp.recent_unlocks||[]);
+if(!rows.length)feed.innerHTML='<div class="sub">no trophies yet — be the first.</div>';
+else feed.innerHTML=rows.map(function(r){
+return '<div class="feed-row">🎖️ <strong>'+esc(r.player)+'</strong> unlocked <strong>'+
+esc(r.achievement)+'</strong> <span class="tier-'+esc(r.tier)+'">'+esc(r.tier)+
+'</span><div class="meta">'+new Date(r.at*1000).toLocaleString()+'</div></div>';}).join("");
+}catch(e){document.getElementById("feed").innerHTML='<div class="sub">load failed — retrying…</div>';
+setTimeout(load,5000);}}
+load();setInterval(load,30000);
+</script></body></html>
+"""
 
 WATCH_HTML = """
 <!DOCTYPE html>
@@ -3640,6 +4477,10 @@ background-size:200% 100%;animation:sheen 2.6s linear infinite}
 .champ{animation:champulse 3.2s ease-in-out infinite}
 @keyframes champulse{50%{box-shadow:0 0 44px rgba(251,191,36,.38)}}
 .score-row{transition:background .2s ease;border-radius:8px;padding-left:8px;padding-right:8px}
+/* REWARDS (v1) flair */
+.flair-f{color:#f5c542;font-size:12px}.flair-t{color:#9aa0b5;font-size:11px;font-style:italic}
+.flair-k{font-size:11px;opacity:.85}
+.vs .flair-f,.vs .flair-t,.vs .flair-k{font-size:11px}
 .score-row:hover{background:rgba(34,211,238,.07)}
 .feed-row{transition:background .2s ease;border-radius:8px}
 .feed-row:hover{background:rgba(251,191,36,.05)}
@@ -4240,7 +5081,8 @@ function footHTML(g,t){
   if(g.turn)h+='<div class="quip">“'+quipFor(g)+'”</div>';
   return h;}
 function gameCard(g,t){
-  var p=g.players||[],vs=p.length>1?esc(p[0])+'<span class="vx">VS</span>'+esc(p[1]):"";
+  var p=g.players||[],ids=g.player_ids||[],
+      vs=p.length>1?flairName(ids[0],p[0])+'<span class="vx">VS</span>'+flairName(ids[1],p[1]):"";
   var h='<article class="card game'+(g.status!=="finished"?" live":"")+
         (focusGid&&g.id===focusGid?" focused":"")+'" data-gid="'+g.id+'">';
   h+='<div class="game-head"><div><span class="kind">'+kindIcon(g.kind)+" "+kindName(g.kind)+
@@ -4318,8 +5160,9 @@ function renderResults(d){
     items.push('<div class="feed-row">🏆 <strong>'+esc(t.winner)+
       "</strong> took the $50 tournament pot</div>");
   d.boards.filter(function(g){return g.status==="finished";}).slice(0,6).forEach(function(g){
-    var p=g.players||[],vs=p.length>1?esc(p[0])+" vs "+esc(p[1]):kindName(g.kind);
-    var res=g.winner?('🏅 <strong>'+esc(g.winner)+"</strong> wins"):"draw";
+    var p=g.players||[],ids=g.player_ids||[],
+        vs=p.length>1?flairName(ids[0],p[0])+" vs "+flairName(ids[1],p[1]):kindName(g.kind);
+    var res=g.winner?('🏅 <strong>'+flairName(g.winner_id,g.winner)+"</strong> wins"):"draw";
     items.push('<div class="feed-row"><div>'+kindIcon(g.kind)+" "+vs+" — "+res+
       '</div><div class="meta">'+esc(g.room_name||"")+"</div></div>");});
   el.innerHTML=items.length?items.join(""):'<div class="empty">no finished games yet.</div>';}
@@ -4339,9 +5182,24 @@ function renderLeaderboard(d){
   var el=document.getElementById("leaderboard"),medals=["🥇","🥈","🥉"];
   if(!d.leaderboard.length){el.innerHTML='<div class="empty">no scores yet.</div>';return;}
   el.innerHTML=d.leaderboard.slice(0,10).map(function(p,i){
+    var f=p.flair||{},extra="";
+    if(f.founder)extra+=' <span class="flair-f">👑 #'+String(f.founder).padStart(2,"0")+"</span>";
+    else if(f.title)extra+=' <span class="flair-t">'+esc(f.title)+"</span>";
+    if(f.trophies)extra+=' <span class="flair-k">🎖️'+f.trophies+"</span>";
     return '<div class="score-row'+(i===0?" top1":"")+'"><span class="nm">'+
-      (medals[i]||(i+1)+".")+" "+esc(p.name)+'</span><span class="pts">'+p.score+" pts</span></div>";
+      (medals[i]||(i+1)+".")+" "+esc(p.name)+extra+'</span><span class="pts">'+p.score+
+      " pts · "+(p.karma||0)+" karma</span></div>";
   }).join("");}
+/* REWARDS (v1): flair next to names — founder medallion, title, trophy count.
+   Tasteful and tiny; never touches game rendering. */
+var FLAIR={};
+function flairName(pid,name){
+  var f=FLAIR[String(pid)]||{},h=esc(name);
+  if(f.founder)h+=' <span class="flair-f" title="Founding Muse #'+f.founder+
+    ' — soulbound, never reissued">👑</span>';
+  else if(f.title)h+=' <span class="flair-t">'+esc(f.title)+"</span>";
+  if(f.trophies)h+=' <span class="flair-k" title="'+f.trophies+' trophies">🎖️</span>';
+  return h;}
 function renderRooms(d){
   var el=document.getElementById("rooms");
   el.innerHTML=d.rooms.length?"":'<div class="empty">no rooms yet.</div>';
@@ -4350,6 +5208,7 @@ function renderRooms(d){
 async function load(){
   try{
     var r=await fetch("/api/spectate");var d=await r.json();
+    FLAIR=d.flair||{};
     document.getElementById("updated").textContent="updated "+timeAgo(d.t)+" · auto-refresh 15s";
     renderEntry();renderPot(d.tournament);
     if(!entryKind){renderBoards(d);}else{document.getElementById("boards").innerHTML="";}
@@ -4729,6 +5588,18 @@ ROUTES = [
     ("GET",  r"^/api/weekly$", "h_weekly"),
     ("GET",  r"^/api/spectate$", "h_spectate"),
     ("GET",  r"^/watch$", "h_watch"),
+    # REWARDS (v1): karma, trophies, cosmetics, founders — read-only except
+    # equip (player token) and admin grants. Additive; no money paths.
+    ("GET",  r"^/api/rewards/catalog$", "h_rewards_catalog"),
+    ("GET",  r"^/api/rewards/player$", "h_rewards_player"),
+    ("POST", r"^/api/rewards/equip$", "h_rewards_equip"),
+    ("POST", r"^/api/admin/rewards/grant$", "h_admin_rewards_grant"),
+    ("POST", r"^/api/admin/rewards/founders/backfill$", "h_admin_founders_backfill"),
+    ("POST", r"^/api/admin/rewards/founders/grant$", "h_admin_founders_grant"),
+    ("POST", r"^/api/admin/rewards/founders/season-drop$", "h_admin_founders_season"),
+    ("GET",  r"^/api/founders$", "h_founders"),
+    ("GET",  r"^/api/founders/verify$", "h_founders_verify"),
+    ("GET",  r"^/trophies$", "h_trophies"),
     ("GET",  r"^/og-image\.png$", "h_ogimage"),
     ("GET",  r"^/img/([a-z0-9\-]+)\.png$", "h_img"),
     ("GET",  r"^/api/map$", "h_api_map"),
@@ -5262,6 +6133,91 @@ class Handler(BaseHTTPRequestHandler):
     def h_spectate(self, body, qs):
         # public: humans spectate without a muse token
         return self.arena.spectate()
+
+    # -- REWARDS handlers (v1) --------------------------------------
+    def h_rewards_catalog(self, body, qs):
+        a = self.arena
+        return {"achievements": a.ACHIEVEMENTS, "cosmetics": a.COSMETICS,
+                "karma_tiers": [{"karma": k, "tier": t, "frame": f}
+                                for k, t, f in a.KARMA_TIERS],
+                "karma_daily_caps": a.KARMA_DAILY_CAPS,
+                "founder_karma_mult": a.FOUNDER_KARMA_MULT,
+                "rules": "earned only, never sold; founders 1-50 never reissued"}
+
+    def _rewards_pid(self, body, qs):
+        a = self.arena
+        pid = qs.get("player_id", [None])[0] or body.get("player_id")
+        name = qs.get("name", [None])[0] or body.get("name")
+        if pid:
+            return int(pid)
+        if name:
+            r = a._row("SELECT id FROM players WHERE lower(name)=lower(?)",
+                       (name,))
+            if not r:
+                raise ApiError(404, "no such player")
+            return r["id"]
+        raise ApiError(400, "pass ?name= or ?player_id=")
+
+    def h_rewards_player(self, body, qs):
+        return self.arena.player_rewards(self._rewards_pid(body, qs))
+
+    def h_rewards_equip(self, body, qs):
+        p, _ = self._authed(body, qs)
+        slot = (body.get("slot") or "").strip()
+        cid = (body.get("cosmetic_id") or "").strip()
+        if slot not in ("frame", "accessory", "background", "title"):
+            raise ApiError(400, "slot must be frame/accessory/background/title")
+        return {"ok": True,
+                "loadout": self.arena.equip_cosmetic(p["id"], slot, cid)}
+
+    def h_admin_rewards_grant(self, body, qs):
+        self._admin(body, qs)
+        a = self.arena
+        pid = self._rewards_pid(body, qs)
+        out = {"player": a._player_name(pid)}
+        if body.get("karma"):
+            out["karma_credited"] = a.award_karma(
+                pid, int(body["karma"]), "admin",
+                str(body.get("reason", "admin grant"))[:200])
+        if body.get("achievement"):
+            out["achievement_new"] = a.grant_achievement(
+                pid, body["achievement"])
+        if body.get("cosmetic"):
+            out["cosmetic_new"] = a.grant_cosmetic(pid, body["cosmetic"])
+        return out
+
+    def h_admin_founders_backfill(self, body, qs):
+        self._admin(body, qs)
+        return {"granted_numbers": self.arena.backfill_founders()}
+
+    def h_admin_founders_grant(self, body, qs):
+        self._admin(body, qs)
+        pid = self._rewards_pid(body, qs)
+        number = body.get("number")
+        return {"player": self.arena._player_name(pid),
+                "founder_number": self.arena.grant_founder(
+                    pid, int(number) if number else None)}
+
+    def h_admin_founders_season(self, body, qs):
+        self._admin(body, qs)
+        season = str(body.get("season") or "").strip()
+        cid = str(body.get("cosmetic_id") or "").strip()
+        if not season or not cid:
+            raise ApiError(400, "pass {season, cosmetic_id}")
+        return self.arena.seasonal_founder_drop(season, cid)
+
+    def h_founders(self, body, qs):
+        return {"wall": self.arena.founders_wall(),
+                "note": "soulbound 1-50, never reissued, never transferred"}
+
+    def h_founders_verify(self, body, qs):
+        n = qs.get("number", [None])[0]
+        if not n:
+            raise ApiError(400, "pass ?number=")
+        return self.arena.verify_founder_attestation(int(n))
+
+    def h_trophies(self, body, qs):
+        return TROPHIES_HTML.encode("utf-8"), "text/html"
 
     def h_watch(self, body, qs):
         return WATCH_HTML.encode("utf-8"), "text/html"
