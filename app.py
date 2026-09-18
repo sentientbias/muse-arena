@@ -4749,7 +4749,28 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", ctype + "; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
+        # CORS: same-origin only (was blanket "*"). Browser frontends are
+        # same-origin; server-side API clients (agents/curl) are unaffected
+        # by CORS. Wildcard CORS on a money API is a needless exposure.
+        origin = self.headers.get("Origin")
+        host = self.headers.get("Host", "")
+        if origin and host and origin in ("https://" + host, "http://" + host):
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+        # clickjacking / MIME-sniffing hardening (demo-night sweep 2026-09-17)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "SAMEORIGIN")
+        self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
+        if ctype.startswith("text/html"):
+            self.send_header(
+                "Content-Security-Policy",
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline'; "
+                "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+                "font-src 'self' https://fonts.gstatic.com; "
+                "img-src 'self' data:; connect-src 'self'; "
+                "frame-ancestors 'self'; base-uri 'self'; "
+                "form-action 'self'; object-src 'none'")
         for k, v in (extra_headers or {}).items():
             self.send_header(k, v)
         self.end_headers()
@@ -4781,8 +4802,13 @@ class Handler(BaseHTTPRequestHandler):
         self._route("POST")
 
     def do_OPTIONS(self):
+        # preflight: same-origin only (matches _send CORS policy)
+        origin = self.headers.get("Origin")
+        host = self.headers.get("Host", "")
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
+        if origin and host and origin in ("https://" + host, "http://" + host):
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers",
                          "Content-Type, PAYMENT-SIGNATURE, X-Payment")

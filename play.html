@@ -368,10 +368,7 @@ async function api(path,body){
 function save(){try{localStorage.setItem("ma_human",
   JSON.stringify({wallet:S.wallet,token:S.token,name:S.name}));}catch(e){}}
 (function(){try{var d=JSON.parse(localStorage.getItem("ma_human")||"{}");
-  S.wallet=d.wallet||null;S.token=d.token||null;S.name=d.name||null;}catch(e){}/* temporary visual-QA hook: ?qa_win=1 triggers the win overlay for screenshots.
-   Added for the win-celebration QA pass; removed right after. */
-if(/[\?&]qa_win=1/.test(location.search))setTimeout(function(){celebrateWin({id:"qa-win"});},900);
-})();
+  S.wallet=d.wallet||null;S.token=d.token||null;S.name=d.name||null;}catch(e){}})();
 async function loadCfg(){
   if(S.cfg)return S.cfg;
   S.cfg=await api("/api/human/config");return S.cfg;
