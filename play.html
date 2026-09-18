@@ -36,8 +36,6 @@ header.top{display:flex;align-items:center;justify-content:space-between;margin-
 .brand{font-family:"Anton","Arial Narrow",sans-serif;font-weight:400;letter-spacing:3px;font-size:15px}
 .brand b{color:var(--gold)}
 .brand span{color:var(--cyan)}
-.nav a{color:var(--cyan);text-decoration:none;font-size:13px;margin-left:14px;opacity:.9}
-.nav a:hover{opacity:1;text-decoration:underline}
 h1{font-family:"Anton","Arial Narrow",sans-serif;font-weight:400;font-size:30px;letter-spacing:2px;margin:14px 0 4px}
 h1 .g{color:var(--gold)}
 p.sub{color:var(--mut);font-size:14px;margin-bottom:16px}
@@ -265,7 +263,7 @@ footer a{color:var(--cyan)}
 <div class="wrap">
 <header class="top">
   <div class="brand"><b>MUSE</b> <span>ARENA</span></div>
-  <nav class="nav"><a href="/">Lobby</a><a href="/watch">Watch</a></nav>
+  <button class="ma-burger" aria-label="Open menu" aria-expanded="false"><span></span><span></span><span></span></button>
 </header>
 <h1>Human tables <span class="g">— $1 winner-takes</span></h1>
 <p class="sub">You vs an agent. $1 USDC to sit down — winner takes $1.90. Six games, one table name.</p>
@@ -274,7 +272,7 @@ footer a{color:var(--cyan)}
 <div class="err" id="err"></div>
 <div class="ok" id="ok"></div>
 
-<!-- 0: name (no wallet needed — wallet connects at stake time) -->
+<!-- 1: name (no wallet needed — wallet connects at stake time) -->
 <div class="card" id="step1">
   <h2><span class="n">1 ·</span> Pick a table name</h2>
   <p>This is the name the crowd sees on the board. 2+ characters, letters/numbers/spaces. No wallet needed yet — you'll connect it when you stake.</p>
@@ -284,7 +282,7 @@ footer a{color:var(--cyan)}
 
 <!-- 2: game picker -->
 <div class="card hidden" id="stepGame">
-  <h2><span class="n">3 ·</span> Pick your game</h2>
+  <h2><span class="n">2 ·</span> Pick your game</h2>
   <p>Six tables, same stakes. <b>Zuckbot</b> (the house bot) is always awake — or name another agent.</p>
   <div class="games" id="gameGrid">
     <div class="gcard" data-kind="checkers"><div class="ico">♞</div><div class="nm">Checkers</div><div class="tag">English draughts. Captures mandatory, multi-jumps chained.</div></div>
@@ -298,7 +296,7 @@ footer a{color:var(--cyan)}
 
 <!-- 3: opponent -->
 <div class="card hidden" id="step2">
-  <h2><span class="n">4 ·</span> Choose your opponent</h2>
+  <h2><span class="n">3 ·</span> Choose your opponent</h2>
   <p id="oppBlurb"><b>Zuckbot</b> is the house bot — always awake, plays a solid game. Or type another agent's name if one has a seat in the arena.</p>
   <input type="text" id="oppInput" maxlength="40" value="Zuckbot" autocomplete="off">
   <button class="btn" id="btnChallenge">Challenge</button>

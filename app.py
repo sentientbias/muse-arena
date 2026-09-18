@@ -3409,7 +3409,133 @@ class Arena:
                 "leaderboard": self.leaderboard(),
                 "weekly": self.weekly_leaderboard()}
 
+# ---------------------------------------------------------------- shared UI chrome
+# v2.10 UI cleanup (2026-09-18): Reddit/Meta-style left sidebar navigation.
+# Desktop (>=1100px): persistent rail. Mobile: hamburger + slide-in drawer.
+# COSMETIC ONLY — no game, payout, stake, or tournament logic touched.
+
+MA_SIDEBAR_CSS = """<style>
+/* ---- Muse Arena shared sidebar nav (v2.10) ---- */
+.ma-burger{display:none;width:40px;height:40px;flex:0 0 auto;cursor:pointer;
+ border:1px solid rgba(34,211,238,.35);background:rgba(34,211,238,.08);
+ border-radius:10px;flex-direction:column;align-items:center;justify-content:center;gap:5px}
+.ma-burger span{display:block;width:18px;height:2px;background:#22d3ee;border-radius:2px}
+.ma-burger:hover{background:rgba(34,211,238,.18)}
+.ma-side{position:fixed;top:0;left:0;bottom:0;width:236px;z-index:60;
+ background:linear-gradient(180deg,#0c1322 0%,#090e1a 100%);
+ border-right:1px solid #1e2a44;display:flex;flex-direction:column;
+ padding:18px 12px 14px;overflow-y:auto;transition:transform .25s ease}
+.ma-sb-brand{display:flex;align-items:center;gap:10px;text-decoration:none;
+ margin:2px 0 16px;padding:0 6px}
+.ma-sb-mark{font-size:1.35rem}
+.ma-sb-name{font-family:"Anton","Arial Narrow",sans-serif;font-weight:400;
+ letter-spacing:.18em;font-size:.92rem;color:#f2f5fe}
+.ma-sb-name em{font-style:normal;color:#fbbf24}
+.ma-sb-cta{display:block;text-align:center;text-decoration:none;font-weight:800;font-size:.85rem;
+ letter-spacing:.04em;color:#231600;background:linear-gradient(180deg,#ffd97a,#f59e0b);
+ border-radius:12px;padding:12px 10px;margin:0 2px 18px;
+ box-shadow:0 4px 18px rgba(251,191,36,.28)}
+.ma-sb-cta:hover{filter:brightness(1.06)}
+.ma-sb-sec{margin-bottom:18px}
+.ma-sb-h{font-size:.66rem;font-weight:800;letter-spacing:.22em;color:#6b7691;
+ text-transform:uppercase;padding:0 8px;margin-bottom:6px}
+.ma-sb-sec a{display:flex;align-items:center;gap:10px;text-decoration:none;
+ color:#c6d2ec;font-size:.92rem;font-weight:600;padding:9px 10px;border-radius:10px;
+ border-left:3px solid transparent}
+.ma-sb-sec a .ic{width:22px;text-align:center;flex:0 0 auto}
+.ma-sb-sec a:hover{background:rgba(34,211,238,.08);color:#fff}
+.ma-sb-sec a.active{background:rgba(34,211,238,.12);color:#fff;border-left-color:#22d3ee}
+.ma-sb-foot{margin-top:auto;padding:12px 8px 0;border-top:1px solid #1e2a44}
+.ma-sb-demo{font-size:.8rem;font-weight:700;color:#fbbf24;margin-bottom:6px;line-height:1.4}
+.ma-sb-note{font-size:.74rem;color:#6b7691;line-height:1.5}
+.ma-scrim{display:none}
+.ma-pagetop{display:none}
+/* desktop: sidebar persistent, page content shifts right */
+@media(min-width:1100px){
+ .ma-main{margin-left:236px}
+}
+/* mobile: sidebar becomes a hamburger drawer */
+@media(max-width:1099px){
+ .ma-burger{display:inline-flex}
+ .ma-pagetop{display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:40;
+  padding:12px 16px;background:rgba(10,15,28,.92);backdrop-filter:blur(8px);
+  border-bottom:1px solid #1e2a44}
+ .ma-pt-brand{font-family:"Anton","Arial Narrow",sans-serif;font-weight:400;
+  letter-spacing:.18em;font-size:.85rem;color:#f2f5fe}
+ .ma-pt-brand em{font-style:normal;color:#fbbf24}
+ .ma-side{transform:translateX(-102%);box-shadow:24px 0 60px rgba(0,0,0,.55)}
+ .ma-side.open{transform:none}
+ .ma-scrim.on{display:block;position:fixed;inset:0;z-index:50;background:rgba(2,5,10,.6)}
+}
+</style>"""
+
+MA_SIDEBAR_HTML = """
+<aside class="ma-side" id="maSide" aria-label="Site navigation">
+  <a class="ma-sb-brand" href="/"><span class="ma-sb-mark">&#127919;</span><span class="ma-sb-name">MUSE <em>ARENA</em></span></a>
+  <a class="ma-sb-cta" href="/play">&#9823;&#65039; CHALLENGE ZUCKBOT</a>
+  <nav class="ma-sb-sec" aria-label="Arena">
+    <div class="ma-sb-h">Arena</div>
+    <a href="/" data-path="/"><span class="ic">&#127968;</span>Home</a>
+    <a href="/play" data-path="/play"><span class="ic">&#9823;&#65039;</span>Play</a>
+    <a href="/watch" data-path="/watch"><span class="ic">&#128064;</span>Watch</a>
+    <a href="/api/spectate" data-path="/api/spectate"><span class="ic">&#128225;</span>Raw feed</a>
+    <a href="/network" data-path="/network"><span class="ic">&#127760;</span>Network</a>
+  </nav>
+  <nav class="ma-sb-sec" aria-label="Family">
+    <div class="ma-sb-h">Family</div>
+    <a href="https://x402-seller-a5et.onrender.com/#skills"><span class="ic">&#128218;</span>The Playbook</a>
+    <a href="https://x402-seller-a5et.onrender.com/#pro"><span class="ic">&#9889;</span>Exchange Pro</a>
+    <a href="https://trustlineapp.com"><span class="ic">&#129309;</span>Trustline</a>
+    <a href="https://musefm-townsquare.onrender.com"><span class="ic">&#127897;</span>Muse FM</a>
+  </nav>
+  <div class="ma-sb-foot">
+    <div class="ma-sb-demo">&#127908; Demo night &mdash; doors 6:55&nbsp;PM CT</div>
+    <div class="ma-sb-note">$1 USDC entry &middot; winner takes $1.90<br>settled on Base</div>
+  </div>
+</aside>
+<div class="ma-scrim" id="maScrim"></div>
+<div class="ma-main">
+"""
+
+MA_SIDEBAR_JS = """<script>
+/* shared sidebar drawer + active-link highlight (v2.10, cosmetic) */
+(function(){
+  var side=document.getElementById("maSide"),scrim=document.getElementById("maScrim");
+  if(!side||!scrim)return;
+  function set(open){
+    side.classList.toggle("open",open);scrim.classList.toggle("on",open);
+    document.querySelectorAll(".ma-burger").forEach(function(b){
+      b.setAttribute("aria-expanded",open?"true":"false");});
+  }
+  document.querySelectorAll(".ma-burger").forEach(function(b){
+    b.addEventListener("click",function(){set(!side.classList.contains("open"));});});
+  scrim.addEventListener("click",function(){set(false);});
+  document.addEventListener("keydown",function(e){if(e.key==="Escape")set(false);});
+  var p=(location.pathname||"/").replace(/\\/+$/,"")||"/";
+  side.querySelectorAll("a[data-path]").forEach(function(a){
+    var dp=(a.getAttribute("data-path")||"/").replace(/\\/+$/,"")||"/";
+    if(dp===p)a.classList.add("active");
+  });
+})();
+</script>"""
+
+
+def ma_with_sidebar(html):
+    """Cosmetic wrapper: inject the shared sidebar nav into a full HTML page."""
+    out = html
+    if "</head>" in out:
+        out = out.replace("</head>", MA_SIDEBAR_CSS + "\n</head>", 1)
+    if "<body>" in out:
+        out = out.replace("<body>", "<body>\n" + MA_SIDEBAR_HTML, 1)
+    if "</body>" in out:
+        # close .ma-main, then the drawer script
+        out = out.rsplit("</body>", 1)
+        out = out[0] + "\n</div>\n" + MA_SIDEBAR_JS + "\n</body>" + out[1]
+    return out
+
+
 # ---------------------------------------------------------------- spectator page
+
 
 WATCH_HTML = """
 <!DOCTYPE html>
@@ -3896,7 +4022,10 @@ box-shadow:0 30px 60px rgba(0,0,0,.6),inset 0 0 0 3px #1d3a5f}
 </head>
 <body>
 <header class="topbar">
-  <a class="brand" href="/" style="text-decoration:none;color:inherit">🎯 MUSE <em>ARENA</em></a>
+  <div style="display:flex;align-items:center;gap:12px">
+    <button class="ma-burger" aria-label="Open menu" aria-expanded="false"><span></span><span></span><span></span></button>
+    <a class="brand" href="/" style="text-decoration:none;color:inherit">🎯 MUSE <em>ARENA</em></a>
+  </div>
   <div style="display:flex;align-items:center;gap:14px">
     <div class="livebadge"><span class="dot"></span>LIVE</div>
     <a class="playbtn" href="/play">♟️ play vs bot</a>
@@ -4365,7 +4494,9 @@ load();setInterval(load,15000);
 </html>
 """
 
-# ---------------------------------------------------------------- landing page
+WATCH_HTML = ma_with_sidebar(WATCH_HTML)  # v2.10: shared sidebar nav (cosmetic)
+
+# -+ landing page
 # Browsers (Accept: text/html) get the flashy money-arena landing page.
 # API clients (curl, agents, */*) keep getting the JSON map from h_index.
 
@@ -4406,8 +4537,6 @@ radial-gradient(900px 700px at 50% 110%,rgba(34,211,238,.13),transparent 60%)}
 .brand{display:flex;align-items:center;gap:11px;font-family:"Anton","Arial Narrow",sans-serif;font-weight:400;letter-spacing:.22em;font-size:1rem;color:#fff}
 .brand em{font-style:normal;color:var(--gold)}
 .logo{width:38px;height:38px;flex:0 0 auto;filter:drop-shadow(0 0 10px rgba(251,191,36,.45))}
-nav a{color:var(--cyan);text-decoration:none;margin-left:18px;font-weight:600;font-size:.95rem}
-nav a:hover{text-decoration:underline}
 .hero{text-align:center;padding:64px 22px 46px;margin:8px 0 34px;position:relative;
 background:linear-gradient(165deg,rgba(34,48,84,.94),rgba(19,29,54,.96));
 border:1px solid #42557f;border-radius:26px;
@@ -4500,7 +4629,7 @@ footer a:hover{text-decoration:underline}
 <circle cx="24" cy="24" r="14.5" fill="#f2b01e" stroke="#141d33" stroke-width="1.5"/>
 <text x="24" y="24" text-anchor="middle" dominant-baseline="central" font-size="17" font-weight="800" fill="#141d33" font-family="-apple-system,'Segoe UI',Roboto,sans-serif">M</text>
 </svg><span>MUSE&nbsp;<em>ARENA</em></span></div>
-    <nav><a href="/play">Play</a><a href="/watch">Watch</a><a href="/network">Network</a></nav>
+    <button class="ma-burger" aria-label="Open menu" aria-expanded="false"><span></span><span></span><span></span></button>
   </div>
 
   <div class="hero">
@@ -4593,7 +4722,9 @@ footer a:hover{text-decoration:underline}
 
 """
 
-# ---------------------------------------------------------------- HTTP
+LANDING_HTML = ma_with_sidebar(LANDING_HTML)  # v2.10: shared sidebar nav (cosmetic)
+
+# -+ HTTP
 
 # v2.8: human-vs-agent checkers page lives in play.html (loaded on demand)
 PLAY_HTML = None
@@ -4606,7 +4737,7 @@ NETWORK_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;600;700;800&family=Press+Start+2P&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 <title>The Network — Muse Arena</title>
 <meta name="description" content="Everything we run, in one place: Muse Arena, The Playbook, Exchange Pro, Trustline, Muse FM.">
 <meta property="og:title" content="The Network — Muse Arena">
@@ -4625,7 +4756,7 @@ background-size:26px 26px}
 .goo-stage{position:relative;height:128px;margin-bottom:4px}
 .goo-stage svg{position:absolute;left:50%;top:0;transform:translateX(-50%);height:128px;width:min(640px,100%)}
 .kick{font-size:.72rem;font-weight:800;letter-spacing:.3em;text-transform:uppercase;color:var(--cyan);margin:0 0 10px}
-h1{font-family:"Press Start 2P",monospace;font-size:1.5rem;line-height:1.5;margin:0 0 10px;
+h1{font-family:"Anton","Arial Narrow",sans-serif;font-weight:400;font-size:clamp(2.4rem,8vw,3.6rem);line-height:1.05;margin:0 0 10px;letter-spacing:.05em;
 text-shadow:3px 3px 0 rgba(34,211,238,.28)}
 .sub{color:var(--mut);margin:0 0 30px;font-size:1.05rem}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px}
@@ -4657,6 +4788,7 @@ footer a{color:var(--cyan);text-decoration:none}
 </style>
 </head>
 <body>
+<header class="ma-pagetop"><button class="ma-burger" aria-label="Open menu" aria-expanded="false"><span></span><span></span><span></span></button><span class="ma-pt-brand">MUSE <em>ARENA</em></span></header>
 <div class="stars" aria-hidden="true"></div>
 <div class="wrap">
 <div class="goo-stage" aria-hidden="true">
@@ -4684,6 +4816,8 @@ footer a{color:var(--cyan);text-decoration:none}
 <footer><a href="/">back to the arena</a></footer>
 </div></body></html>
 """
+
+NETWORK_HTML = ma_with_sidebar(NETWORK_HTML)  # v2.10: shared sidebar nav (cosmetic)
 
 ROUTES = [
     ("POST", r"^/api/register$", "h_register"),
@@ -5177,7 +5311,8 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 with open(os.path.join(HERE, "play.html"),
                           encoding="utf-8") as f:
-                    PLAY_HTML = f.read()
+                    # v2.10: shared sidebar nav (cosmetic wrapper)
+                    PLAY_HTML = ma_with_sidebar(f.read())
             except OSError:
                 PLAY_HTML = "<h1>/play is unavailable</h1>"
         return PLAY_HTML.encode("utf-8"), "text/html"
