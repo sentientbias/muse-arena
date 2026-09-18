@@ -32,15 +32,17 @@ def main():
     r1 = a.register("RWAlpha"); p1 = r1["player_id"]
     r2 = a.register("RWBeta"); p2 = r2["player_id"]
     check("early-adopter granted", a._has_achievement(p1, "early-adopter"))
-    check("early-adopter karma 25", a.karma_balance(p1) == 25, a.karma_balance(p1))
+    # registration now also grants the early/activity line's
+    # early-founding-week (+10) and early-first-100 (+25)
+    check("register karma 60", a.karma_balance(p1) == 60, a.karma_balance(p1))
 
     print("karma + caps")
     a.award_karma(p2, 10, "arena_game", "t1")
     a.award_karma(p2, 100, "arena_game", "t2")
-    check("daily cap enforced (20)", a.karma_balance(p2) == 25 + 20,
+    check("daily cap enforced (20)", a.karma_balance(p2) == 60 + 20,
           a.karma_balance(p2))
     a.award_karma(p2, 5, "arena_win", "t3")  # different source, own cap
-    check("separate source cap", a.karma_balance(p2) == 25 + 20 + 5, a.karma_balance(p2))
+    check("separate source cap", a.karma_balance(p2) == 60 + 20 + 5, a.karma_balance(p2))
 
     print("house bot excluded")
     house = a._house_pid()
@@ -185,6 +187,155 @@ def main():
     check("batch flair pet", fb[p3]["pet"] == "pet-dragon-hatchling.png")
     check("no-pet flair empty", a._flair_for(p1)["pet"] == "")
 
+    print("early-bird + activity badges")
+    now = app.now
+    import json as _json2
+    import datetime as _dt
+    BADGES = ["early-first-game", "early-day-one", "early-first-100",
+              "early-founding-week", "volume-10", "volume-25", "volume-50",
+              "volume-100", "volume-250", "streak-3w", "streak-5w",
+              "streak-10w", "grind-day-max", "grind-night-owl",
+              "grind-early-bird", "grind-weekend", "milestone-first-win",
+              "milestone-first-tourney", "milestone-first-stake",
+              "milestone-comeback"]
+    check("20 badge achievements registered",
+          len(BADGES) == 20 and all(b in a.ACHIEVEMENTS for b in BADGES),
+          str(set(BADGES) - set(a.ACHIEVEMENTS)))
+    check("20 badge cosmetics, slot=badge",
+          sum(1 for c in a.COSMETICS.values() if c.get("slot") == "badge")
+          == 20)
+    r4 = a.register("RWDelta"); p4 = r4["player_id"]
+    for b in BADGES:
+        spec = a.ACHIEVEMENTS[b]
+        cid = spec.get("unlock", "")
+        check("badge cosmetic " + b,
+              cid.startswith("badge-") and cid in a.COSMETICS)
+        # early-first-100 + early-founding-week were already granted to p4
+        # by the register hook above; re-grants must be idempotent no-ops
+        expect_new = b not in ("early-first-100", "early-founding-week")
+        n1 = a.grant_achievement(p4, b)
+        n2 = a.grant_achievement(p4, b)
+        check("idempotent " + b,
+              (n1 is True and n2 is False) if expect_new
+              else (n1 is False and n2 is False))
+    check("register fired early-founding-week",
+          a._has_achievement(p4, "early-founding-week"))
+    check("register fired early-first-100",
+          a._has_achievement(p4, "early-first-100"))
+    check("house excluded from all badges",
+          all(a.grant_achievement(house, b) is False for b in BADGES))
+    check("house holds no badges",
+          not [c for c in a.player_rewards(house)["inventory"]
+               if c.startswith("badge-")])
+    try:
+        a.equip_cosmetic(p4, "badge", "badge-early-first-game")
+        check("badge equip rejected (display-only)", False)
+    except app.ApiError as e:
+        check("badge equip rejected (display-only)", e.status == 400,
+              e.message)
+
+    print("badge unlock rules (fixture games)")
+    def fin_game(pids, winner, fts, staked=False):
+        gid = a._insert(
+            "INSERT INTO board_games (room_id, creator_id, kind, status,"
+            " players_json, state_json, turn_pid, winner_id, created_at,"
+            " finished_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (1, pids[0], "checkers", "finished", _json2.dumps(pids), "{}",
+             pids[0], winner, fts, fts))
+        if staked:
+            for pid in pids:
+                a._insert("INSERT INTO stakes (game_id, player_id,"
+                          " player_address, status, created_at)"
+                          " VALUES (?,?,?,?,?)",
+                          (gid, pid, "0xabc", "complete", fts))
+        return gid
+    r5 = a.register("RWEpsilon"); p5 = r5["player_id"]
+    r6 = a.register("RWZeta"); p6 = r6["player_id"]
+    g1 = fin_game([p5, p6], p5, now())
+    a._rewards_on_game_finish(g1, [p5, p6], p5, False, "checkers", {},
+                              False)
+    check("early-first-game (both players)",
+          a._has_achievement(p5, "early-first-game")
+          and a._has_achievement(p6, "early-first-game"))
+    check("early-day-one", a._has_achievement(p5, "early-day-one"))
+    check("milestone-first-win", a._has_achievement(p5, "milestone-first-win"))
+    check("loser gets no first-win",
+          not a._has_achievement(p6, "milestone-first-win"))
+    # night owl: 02:00 UTC (not early-bird, which is 05:00-06:59)
+    owl_ts = (now() // 86400) * 86400 + 2 * 3600
+    g2 = fin_game([p5, p6], p6, owl_ts)
+    a._rewards_on_game_finish(g2, [p5, p6], p6, False, "checkers", {},
+                              False)
+    check("grind-night-owl", a._has_achievement(p5, "grind-night-owl"))
+    check("02:00 is not early-bird",
+          not a._has_achievement(p5, "grind-early-bird"))
+    # early bird: 06:00 UTC
+    eb_ts = (now() // 86400) * 86400 + 6 * 3600
+    g3 = fin_game([p5, p6], p5, eb_ts)
+    a._rewards_on_game_finish(g3, [p5, p6], p5, False, "checkers", {},
+                              False)
+    check("grind-early-bird", a._has_achievement(p5, "grind-early-bird"))
+    # weekend warrior: a Saturday
+    sat = _dt.datetime(2026, 9, 19, 12, 0,
+                       tzinfo=_dt.timezone.utc).timestamp()
+    g4 = fin_game([p5, p6], p5, int(sat))
+    a._rewards_on_game_finish(g4, [p5, p6], p5, False, "checkers", {},
+                              False)
+    check("grind-weekend", a._has_achievement(p5, "grind-weekend"))
+    # volume: 10 and 25
+    r7 = a.register("RWEta"); p7 = r7["player_id"]
+    base = (now() // 86400) * 86400 - 40 * 86400  # 40 days back, one/day
+    for i in range(26):
+        fin_game([p7, p6], p7 if i % 2 else p6, base + i * 86400)
+    g7b = fin_game([p7, p6], p7, now())
+    a._badge_game_check(p7, g7b, False)
+    check("volume-10", a._has_achievement(p7, "volume-10"))
+    check("volume-25", a._has_achievement(p7, "volume-25"))
+    check("volume-50 not yet", not a._has_achievement(p7, "volume-50"))
+    # day-max: 15 games in one UTC day
+    r8 = a.register("RWTheta"); p8 = r8["player_id"]
+    d0 = (now() // 86400) * 86400
+    for i in range(15):
+        fin_game([p8, p6], p8, d0 + i * 600)
+    g8b = fin_game([p8, p6], p8, d0 + 15 * 600)
+    a._badge_game_check(p8, g8b, False)
+    check("grind-day-max", a._has_achievement(p8, "grind-day-max"))
+    # comeback: 31 days between finishes
+    r9 = a.register("RWIota"); p9 = r9["player_id"]
+    fin_game([p9, p6], p9, now() - 31 * 86400)
+    g5 = fin_game([p9, p6], p6, now())
+    a._badge_game_check(p9, g5, False)
+    check("milestone-comeback", a._has_achievement(p9, "milestone-comeback"))
+    # streak badges: 3 straight wins via the real hook
+    rA = a.register("RWKappa"); pA = rA["player_id"]
+    for _ in range(3):
+        ga = fin_game([pA, p6], pA, now())
+        a._rewards_on_game_finish(ga, [pA, p6], pA, False, "checkers", {},
+                                  False)
+    check("streak-3w badge", a._has_achievement(pA, "streak-3w"))
+    check("v1 streak-3 still fires", a._has_achievement(pA, "streak-3"))
+    check("streak-5w not yet", not a._has_achievement(pA, "streak-5w"))
+    # first staked game
+    rB = a.register("RWLambda"); pB = rB["player_id"]
+    g6 = fin_game([pB, p6], pB, now(), staked=True)
+    a._rewards_on_game_finish(g6, [pB, p6], pB, False, "checkers", {},
+                              True)
+    check("milestone-first-stake",
+          a._has_achievement(pB, "milestone-first-stake")
+          and a._has_achievement(p6, "milestone-first-stake"))
+    g7 = fin_game([pB, p6], p6, now(), staked=True)
+    a._rewards_on_game_finish(g7, [pB, p6], p6, False, "checkers", {},
+                              True)
+    rows = a._rows("SELECT COUNT(*) c FROM trophy_case WHERE player_id=? "
+                   "AND achievement_id='milestone-first-stake'", (pB,))
+    check("first-stake granted once", rows[0]["c"] == 1)
+    # first tournament entry badge
+    a._rewards_on_tournament_entry(pB)
+    check("milestone-first-tourney",
+          a._has_achievement(pB, "milestone-first-tourney"))
+    check("gladiator still fires",
+          a._has_achievement(pB, "tournament-gladiator"))
+
     print("game-finish failure isolation")
     # rewards hook raising must never break game settlement
     orig = a._rewards_on_game_finish
@@ -202,8 +353,8 @@ def main():
         a._rewards_on_game_finish = orig
 
     print("catalog + routes wiring")
-    check("19 achievements", len(a.ACHIEVEMENTS) == 19, len(a.ACHIEVEMENTS))
-    check("26 cosmetics", len(a.COSMETICS) == 26, len(a.COSMETICS))
+    check("39 achievements", len(a.ACHIEVEMENTS) == 39, len(a.ACHIEVEMENTS))
+    check("46 cosmetics", len(a.COSMETICS) == 46, len(a.COSMETICS))
     imgs = {c["img"] for c in a.COSMETICS.values() if c.get("img")}
     missing = [i for i in imgs if not os.path.exists(
         os.path.join(HERE, "assets", i))]
@@ -242,17 +393,29 @@ def main():
             st, body = get("/img/%s.png" % img)
             check("GET /img/%s.png 200" % img,
                   st == 200 and len(body) > 1000, st)
+        for img in ("badge-early-first-game", "badge-volume-250",
+                    "badge-streak-10w", "badge-grind-night-owl",
+                    "badge-milestone-comeback"):
+            st, body = get("/img/%s.png" % img)
+            check("GET /img/%s.png 200" % img,
+                  st == 200 and len(body) > 1000, st)
         st, body = get("/trophies")
         check("GET /trophies 200 + Dragon Den",
               st == 200 and b"Dragon Den" in body, st)
+        check("trophies has Badge Case", b"Badge Case" in body)
         st, body = get("/api/rewards/catalog")
         cat = _json.loads(body)
         check("catalog pet_thresholds x7",
               len(cat.get("pet_thresholds", [])) == 7)
+        check("catalog badge_line x20",
+              len(cat.get("badge_line", [])) == 20, cat.get("badge_line"))
+        check("catalog 20 badge cosmetics",
+              sum(1 for c in cat["cosmetics"].values()
+                  if c["slot"] == "badge") == 20)
         check("catalog 7 pet cosmetics",
               sum(1 for c in cat["cosmetics"].values()
                   if c["slot"] == "pet") == 7)
-        check("catalog 19 achievements", len(cat["achievements"]) == 19)
+        check("catalog 39 achievements", len(cat["achievements"]) == 39)
         st, body = get("/api/spectate")
         sp = _json.loads(body)
         check("spectate flair map present",
