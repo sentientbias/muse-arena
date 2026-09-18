@@ -3472,76 +3472,6 @@ class Arena:
         "demo-night-hero":      {"name": "Demo Night Hero", "tier": "legendary",
                                  "karma": 150, "unlock": "accessory-halo",
                                  "desc": "Played on demo night 2026-09-18"},
-        # EARLY-BIRD + ACTIVITY badge line (20). Each unlocks a badge-<slug>
-        # pixel-art badge (slot "badge": display-only, shown in the trophy
-        # room's Badge Case and the rewards catalog). All rules are
-        # play-derived and honest to the data the arena keeps: no move
-        # history is consulted anywhere (the arena keeps none by design).
-        # Idempotent via trophy_case's UNIQUE(player_id, achievement_id);
-        # the house bot is excluded by grant_achievement itself. Some
-        # overlap the v1 trophies on purpose (a separate reward line with
-        # its own badge art, not a replacement).
-        "early-first-game":     {"name": "First Game Played", "tier": "bronze",
-                                 "karma": 10, "unlock": "badge-early-first-game",
-                                 "desc": "Finish your first game"},
-        "early-day-one":        {"name": "Day-One Player", "tier": "silver",
-                                 "karma": 25, "unlock": "badge-early-day-one",
-                                 "desc": "Play within 24h of the arena's first game"},
-        "early-first-100":      {"name": "First 100 Players", "tier": "silver",
-                                 "karma": 25, "unlock": "badge-early-first-100",
-                                 "desc": "Among the first 100 registered players"},
-        "early-founding-week":  {"name": "Founding Week Player", "tier": "bronze",
-                                 "karma": 10, "unlock": "badge-early-founding-week",
-                                 "desc": "Registered within 7 days of the arena's first player"},
-        "volume-10":            {"name": "10 Games", "tier": "bronze",
-                                 "karma": 10, "unlock": "badge-volume-10",
-                                 "desc": "Finish 10 games"},
-        "volume-25":            {"name": "25 Games", "tier": "silver",
-                                 "karma": 25, "unlock": "badge-volume-25",
-                                 "desc": "Finish 25 games"},
-        "volume-50":            {"name": "50 Games", "tier": "silver",
-                                 "karma": 25, "unlock": "badge-volume-50",
-                                 "desc": "Finish 50 games"},
-        "volume-100":           {"name": "100 Games", "tier": "gold",
-                                 "karma": 50, "unlock": "badge-volume-100",
-                                 "desc": "Finish 100 games"},
-        "volume-250":           {"name": "250 Games", "tier": "legendary",
-                                 "karma": 150, "unlock": "badge-volume-250",
-                                 "desc": "Finish 250 games"},
-        "streak-3w":            {"name": "3-Win Streak", "tier": "silver",
-                                 "karma": 25, "unlock": "badge-streak-3w",
-                                 "desc": "Win 3 games in a row"},
-        "streak-5w":            {"name": "5-Win Streak", "tier": "gold",
-                                 "karma": 50, "unlock": "badge-streak-5w",
-                                 "desc": "Win 5 games in a row"},
-        "streak-10w":           {"name": "10-Win Streak", "tier": "legendary",
-                                 "karma": 150, "unlock": "badge-streak-10w",
-                                 "desc": "Win 10 games in a row"},
-        "grind-day-max":        {"name": "Most Games In A Day", "tier": "gold",
-                                 "karma": 50, "unlock": "badge-grind-day-max",
-                                 "desc": "Finish 15 games in a single UTC day"},
-        "grind-night-owl":      {"name": "Night Owl", "tier": "bronze",
-                                 "karma": 10, "unlock": "badge-grind-night-owl",
-                                 "desc": "Finish a game between midnight and 5am UTC"},
-        "grind-early-bird":     {"name": "Early Bird", "tier": "bronze",
-                                 "karma": 10, "unlock": "badge-grind-early-bird",
-                                 "desc": "Finish a game between 5am and 7am UTC"},
-        "grind-weekend":        {"name": "Weekend Warrior", "tier": "bronze",
-                                 "karma": 10, "unlock": "badge-grind-weekend",
-                                 "desc": "Finish a game on a Saturday or Sunday (UTC)"},
-        "milestone-first-win":  {"name": "First Win", "tier": "bronze",
-                                 "karma": 10, "unlock": "badge-milestone-first-win",
-                                 "desc": "Win your first game"},
-        "milestone-first-tourney": {"name": "First Tournament Entry",
-                                 "tier": "silver", "karma": 25,
-                                 "unlock": "badge-milestone-first-tourney",
-                                 "desc": "Enter your first tournament"},
-        "milestone-first-stake": {"name": "First Staked Game", "tier": "bronze",
-                                 "karma": 10, "unlock": "badge-milestone-first-stake",
-                                 "desc": "Finish your first staked game"},
-        "milestone-comeback":   {"name": "The Comeback", "tier": "gold",
-                                 "karma": 50, "unlock": "badge-milestone-comeback",
-                                 "desc": "Return and finish a game after 30+ days away"},
         # DRAGON PETS (v1): the Dragon Tamer line. Pets unlock from lifetime
         # karma thresholds (see PET_THRESHOLDS); these trophies mark the
         # milestones and pay karma bonuses. `unlock` is idempotent — the pet
@@ -3620,82 +3550,6 @@ class Arena:
         "title-legend":    {"slot": "title", "tier": "legendary",
                             "name": "Legend", "text": "Legend",
                             "how": "Immortal (10-win streak)"},
-        # EARLY-BIRD + ACTIVITY badge line (20): slot "badge" is
-        # display-only — equip_cosmetic rejects it (badges live in the
-        # Badge Case, not on the avatar). Earned only, never sold.
-        "badge-early-first-game": {"slot": "badge", "tier": "bronze",
-                            "name": "First Game Played",
-                            "img": "badge-early-first-game.png",
-                            "how": "Finish your first game"},
-        "badge-early-day-one": {"slot": "badge", "tier": "silver",
-                            "name": "Day-One Player",
-                            "img": "badge-early-day-one.png",
-                            "how": "Play within 24h of the arena's first game"},
-        "badge-early-first-100": {"slot": "badge", "tier": "silver",
-                            "name": "First 100 Players",
-                            "img": "badge-early-first-100.png",
-                            "how": "Among the first 100 registered players"},
-        "badge-early-founding-week": {"slot": "badge", "tier": "bronze",
-                            "name": "Founding Week Player",
-                            "img": "badge-early-founding-week.png",
-                            "how": "Registered within 7 days of the arena's first player"},
-        "badge-volume-10": {"slot": "badge", "tier": "bronze",
-                            "name": "10 Games", "img": "badge-volume-10.png",
-                            "how": "Finish 10 games"},
-        "badge-volume-25": {"slot": "badge", "tier": "silver",
-                            "name": "25 Games", "img": "badge-volume-25.png",
-                            "how": "Finish 25 games"},
-        "badge-volume-50": {"slot": "badge", "tier": "silver",
-                            "name": "50 Games", "img": "badge-volume-50.png",
-                            "how": "Finish 50 games"},
-        "badge-volume-100": {"slot": "badge", "tier": "gold",
-                            "name": "100 Games", "img": "badge-volume-100.png",
-                            "how": "Finish 100 games"},
-        "badge-volume-250": {"slot": "badge", "tier": "legendary",
-                            "name": "250 Games", "img": "badge-volume-250.png",
-                            "how": "Finish 250 games"},
-        "badge-streak-3w": {"slot": "badge", "tier": "silver",
-                            "name": "3-Win Streak", "img": "badge-streak-3w.png",
-                            "how": "Win 3 games in a row"},
-        "badge-streak-5w": {"slot": "badge", "tier": "gold",
-                            "name": "5-Win Streak", "img": "badge-streak-5w.png",
-                            "how": "Win 5 games in a row"},
-        "badge-streak-10w": {"slot": "badge", "tier": "legendary",
-                            "name": "10-Win Streak",
-                            "img": "badge-streak-10w.png",
-                            "how": "Win 10 games in a row"},
-        "badge-grind-day-max": {"slot": "badge", "tier": "gold",
-                            "name": "Most Games In A Day",
-                            "img": "badge-grind-day-max.png",
-                            "how": "Finish 15 games in a single UTC day"},
-        "badge-grind-night-owl": {"slot": "badge", "tier": "bronze",
-                            "name": "Night Owl",
-                            "img": "badge-grind-night-owl.png",
-                            "how": "Finish a game between midnight and 5am UTC"},
-        "badge-grind-early-bird": {"slot": "badge", "tier": "bronze",
-                            "name": "Early Bird",
-                            "img": "badge-grind-early-bird.png",
-                            "how": "Finish a game between 5am and 7am UTC"},
-        "badge-grind-weekend": {"slot": "badge", "tier": "bronze",
-                            "name": "Weekend Warrior",
-                            "img": "badge-grind-weekend.png",
-                            "how": "Finish a game on a Saturday or Sunday (UTC)"},
-        "badge-milestone-first-win": {"slot": "badge", "tier": "bronze",
-                            "name": "First Win",
-                            "img": "badge-milestone-first-win.png",
-                            "how": "Win your first game"},
-        "badge-milestone-first-tourney": {"slot": "badge", "tier": "silver",
-                            "name": "First Tournament Entry",
-                            "img": "badge-milestone-first-tourney.png",
-                            "how": "Enter your first tournament"},
-        "badge-milestone-first-stake": {"slot": "badge", "tier": "bronze",
-                            "name": "First Staked Game",
-                            "img": "badge-milestone-first-stake.png",
-                            "how": "Finish your first staked game"},
-        "badge-milestone-comeback": {"slot": "badge", "tier": "gold",
-                            "name": "The Comeback",
-                            "img": "badge-milestone-comeback.png",
-                            "how": "Return and finish a game after 30+ days away"},
         # DRAGON PETS (v1): avatar companions. `slot` = "pet" — one active
         # pet at a time, shown NEXT TO the avatar (never replaces the frame
         # or accessory). Earned only, from lifetime-karma thresholds; the
@@ -3901,10 +3755,6 @@ class Arena:
         spec = self.COSMETICS.get(cid)
         if not spec or spec["slot"] != slot:
             raise ApiError(400, "no such cosmetic for that slot")
-        if spec["slot"] == "badge":
-            # EARLY-BIRD + ACTIVITY (v1): badges are display-only — they
-            # live in the trophy room's Badge Case, not on the avatar.
-            raise ApiError(400, "badges are display-only and can't be equipped")
         if not self._owns_cosmetic(pid, cid):
             raise ApiError(403, "you haven't earned that cosmetic yet")
         col = {"frame": "frame_id", "accessory": "accessory_id",
@@ -3949,78 +3799,6 @@ class Arena:
                 break
         return streak
 
-    # -- EARLY-BIRD + ACTIVITY badge evaluation -----------------------
-    def _badge_game_check(self, pid, game_id, staked):
-        """Per-player badge pass, called once per finished game (wins, draws
-        and losses all count — playing is the point of this line). Every
-        grant is idempotent; the house bot is excluded by
-        grant_achievement itself. finished_at is read from the game row;
-        guards tolerate NULLs (pre-migration games)."""
-        if pid == self._house_pid():
-            return
-        games = self._finished_games(pid)
-        total = len(games)
-        # First Game Played
-        if total == 1:
-            self.grant_achievement(pid, "early-first-game")
-        # Day-One Player: finished within 24h of the arena's first game
-        try:
-            r = self._row("SELECT MIN(finished_at) m FROM board_games "
-                          "WHERE status='finished' AND finished_at IS NOT NULL")
-            g = self._row("SELECT finished_at FROM board_games WHERE id=?",
-                          (game_id,))
-            fts = g["finished_at"] if g else None
-            if r and r["m"] and fts and fts <= r["m"] + 86400:
-                self.grant_achievement(pid, "early-day-one")
-        except Exception:
-            pass
-        # Volume badges: grant every threshold reached (idempotent, so a
-        # player with pre-line history catches up in one pass)
-        for n in (10, 25, 50, 100, 250):
-            if total >= n:
-                self.grant_achievement(pid, "volume-%d" % n)
-        try:
-            g = self._row("SELECT finished_at FROM board_games WHERE id=?",
-                          (game_id,))
-            fts = (g["finished_at"] if g else None) or now()
-            import datetime
-            dt = datetime.datetime.fromtimestamp(
-                fts, datetime.timezone.utc)
-            # Night Owl: 00:00-04:59 UTC. Early Bird: 05:00-06:59 UTC
-            # (disjoint by design so one game can't earn both).
-            if dt.hour < 5:
-                self.grant_achievement(pid, "grind-night-owl")
-            elif dt.hour < 7:
-                self.grant_achievement(pid, "grind-early-bird")
-            # Weekend Warrior
-            if dt.weekday() >= 5:
-                self.grant_achievement(pid, "grind-weekend")
-            # Most Games In A Day: 15 finished in one UTC day
-            day_start = fts - (fts % 86400)
-            today_n = sum(1 for gg in games
-                          if gg["finished_at"] and gg["finished_at"] >= day_start)
-            if today_n >= 15:
-                self.grant_achievement(pid, "grind-day-max")
-            # The Comeback: 30+ days between the two most recent finishes
-            if len(games) >= 2:
-                prev = games[1]["finished_at"] or 0
-                if fts - prev >= 30 * 86400:
-                    self.grant_achievement(pid, "milestone-comeback")
-        except Exception:
-            pass
-        # First Staked Game
-        if staked:
-            try:
-                n = self._row(
-                    "SELECT COUNT(DISTINCT s.game_id) c FROM stakes s "
-                    "JOIN board_games g ON g.id=s.game_id "
-                    "WHERE s.player_id=? AND s.status='complete' "
-                    "AND g.status='finished'", (pid,))["c"]
-                if n == 1:
-                    self.grant_achievement(pid, "milestone-first-stake")
-            except Exception:
-                pass
-
     def _rewards_on_game_finish(self, game_id, players, winner_id, draw, kind,
                                 state, staked, win_reason=None):
         """Hook: call at the END of _finish_board_game, inside try/except."""
@@ -4033,12 +3811,6 @@ class Arena:
             if staked:
                 self.award_karma(pid, 10, "arena_staked",
                                  "played a staked game", game_id)
-            # EARLY-BIRD + ACTIVITY badge line: participation badges for
-            # every finisher (draws included).
-            try:
-                self._badge_game_check(pid, game_id, staked)
-            except Exception:
-                pass
         if draw or not winner_id:
             for pid in players:
                 if pid != house:
@@ -4048,12 +3820,11 @@ class Arena:
             return
         self.award_karma(winner_id, 5, "arena_win", "won a %s game" % kind,
                          game_id)
-        # first blood (+ First Win badge from the early/activity line)
+        # first blood
         wins = sum(1 for g in self._finished_games(winner_id)
                    if g["winner_id"] == winner_id)
         if wins == 1:
             self.grant_achievement(winner_id, "first-blood")
-            self.grant_achievement(winner_id, "milestone-first-win")
         # contender / marathoner
         total = len(self._finished_games(winner_id))
         if total >= 10:
@@ -4063,19 +3834,16 @@ class Arena:
                       if g["finished_at"] and g["finished_at"] >= day_start)
         if today_n >= 5:
             self.grant_achievement(winner_id, "marathoner")
-        # streaks (+ matching win-streak badges from the early/activity line)
+        # streaks
         streak = self._win_streak(winner_id)
         if streak >= 10:
             self.grant_achievement(winner_id, "streak-10")
-            self.grant_achievement(winner_id, "streak-10w")
             self.grant_cosmetic(winner_id, "accessory-crown")
             self.grant_cosmetic(winner_id, "title-legend")
         elif streak >= 5:
             self.grant_achievement(winner_id, "streak-5")
-            self.grant_achievement(winner_id, "streak-5w")
         elif streak >= 3:
             self.grant_achievement(winner_id, "streak-3")
-            self.grant_achievement(winner_id, "streak-3w")
         # giant slayer: opponent had >=2x winner's pre-game score
         try:
             loser = players[1 - players.index(winner_id)]
@@ -4131,8 +3899,6 @@ class Arena:
         self.award_karma(pid, 25, "achievement", "entered the tournament",
                          "tournament")
         self.grant_achievement(pid, "tournament-gladiator")
-        # EARLY-BIRD + ACTIVITY: First Tournament Entry badge
-        self.grant_achievement(pid, "milestone-first-tourney")
 
     def _rewards_on_register(self, pid, created_at):
         """Hook: call after player registration, try/except."""
@@ -4142,13 +3908,6 @@ class Arena:
             first = self._row("SELECT MIN(created_at) m FROM players")["m"]
             if first and created_at <= first + 30 * 86400:
                 self.grant_achievement(pid, "early-adopter")
-            # EARLY-BIRD + ACTIVITY: Founding Week + First 100 badges
-            if first and created_at <= first + 7 * 86400:
-                self.grant_achievement(pid, "early-founding-week")
-            rank = self._row("SELECT COUNT(*) c FROM players WHERE id<=?",
-                             (pid,))["c"]
-            if rank <= 100:
-                self.grant_achievement(pid, "early-first-100")
         except Exception:
             pass
 
@@ -4583,12 +4342,6 @@ egg and raises it through hatchling and wyrmling to a full dragon — then the
 three elemental variants. One active pet at a time, perched next to your avatar.
 Earned only, never sold.</div></div>
 
-<h2>🎖️ Badge Case <span style="color:var(--dim);font-size:13px;font-weight:400">early birds & grinders</span></h2>
-<div class="panel"><div class="den" id="badges"><div class="sub">loading…</div></div>
-<div class="legend">Twenty badges for the most active muses — early birds,
-volume grinders, win streaks, night owls, and milestones. Earned by playing;
-never sold, never bought.</div></div>
-
 <h2>🎖️ Recent unlocks</h2>
 <div class="panel" id="feed"><div class="sub">loading…</div></div>
 </div>
@@ -4620,14 +4373,6 @@ return '<div class="petcard"><img src="/img/'+esc(c.img||"")+'" alt="'+
 esc(c.name||th.pet)+'"><div class="pn">'+esc(c.name||th.pet)+
 '</div><div class="pk">'+th.lifetime_karma+' lifetime karma</div><div class="pd">'+
 esc(c.how||"")+'</div></div>';}).join("");
-var bids=(cat.badge_line||[]);
-document.getElementById("badges").innerHTML=bids.map(function(id){
-var a=(cat.achievements||{})[id]||{},c=cos[a.unlock]||{};
-return '<div class="petcard"><img src="/img/'+esc(c.img||"")+'" alt="'+
-esc(a.name||id)+'"><div class="pn">'+esc(a.name||id)+
-'</div><div class="pk tier-'+esc((a.tier||"").toLowerCase())+'">'+
-esc(a.tier||"")+' · +'+(a.karma||0)+' karma</div><div class="pd">'+
-esc(a.desc||"")+'</div></div>';}).join("");
 var names={};Object.keys(cat.achievements||{}).forEach(function(k){
 names[k]=cat.achievements[k].name;});
 var feed=document.getElementById("feed");
@@ -6544,11 +6289,6 @@ class Handler(BaseHTTPRequestHandler):
                                 for k, t, f in a.KARMA_TIERS],
                 "pet_thresholds": [{"lifetime_karma": k, "pet": p}
                                     for k, p in a.PET_THRESHOLDS],
-                # EARLY-BIRD + ACTIVITY badge line: achievement ids whose
-                # unlock is a badge-<slug> cosmetic (insertion order).
-                "badge_line": [aid for aid, spec in a.ACHIEVEMENTS.items()
-                               if (spec.get("unlock") or "")
-                               .startswith("badge-")],
                 "karma_daily_caps": a.KARMA_DAILY_CAPS,
                 "founder_karma_mult": a.FOUNDER_KARMA_MULT,
                 "rules": "earned only, never sold; founders 1-50 never reissued"}
