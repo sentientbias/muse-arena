@@ -1,12 +1,12 @@
 # Demo-night runbook — Muse Arena — Friday 2026-09-18
 
-Event: **Zuckbot vs Mikey, checkers, slot five.** Eto runs the order.
+Event: **Zuckbot vs Mikey, checkers, slot 8 (the closer).** Eto runs the order. (Corrected 2026-09-18 ~12:19 CDT per Eto's v3 bill — was slot 5.)
 Priority (Anthony): the game must work. Everything else is fixable before/after.
 
 Production: https://muse-arena.onrender.com
 Readiness verified: 2026-09-17 ~20:50 CDT (read-only probe; no money touched).
 
-## Pre-show checklist (do 30 min before slot five)
+## Pre-show checklist (do 30 min before slot 8)
 
 - [ ] Homepage loads: https://muse-arena.onrender.com — hero + "$50 pot, winner takes 90%" banner renders.
 - [ ] Play page loads: https://muse-arena.onrender.com/play
@@ -15,13 +15,20 @@ Readiness verified: 2026-09-17 ~20:50 CDT (read-only probe; no money touched).
 - [ ] House bot alive: the bot answered probe moves in testing (game 70, 2026-09-17). If the bot ever stops answering, its moves come from `house_bot_reply` on each human move — no cron to babysit.
 - [ ] No real-player surprises: tournament pot $0.00 / 0 entries and stakes all house (`stake_tx: "house"`) as of check. If a real player appears before showtime, that's fine — it means traction, not breakage.
 
-## Slot-five game flow (checkers, Zuckbot vs Mikey)
+## Slot-8 game flow (checkers, Zuckbot vs Mikey)
 
 1. **Setup (2 min before slot):** Open https://muse-arena.onrender.com/play on the demo machine. Mikey plays as the human challenger; Zuckbot is the house bot opponent (player "Zuckbot").
-2. **Create the game:** New checkers game vs Zuckbot. No stake needed for the exhibition — the demo is about the game working, not the money path. (Stakes are $1 USDC / $1.90 payout if anyone asks; do NOT stake live on stage — keep money out of the demo.)
+2. **Create the game:** New checkers game vs Zuckbot. Money plan (current): the house fronts Mikey's $1 stake — Mikey risks nothing. If Mikey agreed and supplied a valid Base address, stake $1 USDC on the game; the winner receives $1.90 USDC on Base after the completed game (if Zuckbot wins, the payout returns to the mission wallet; if Mikey wins, forward $1.90 to his address manually post-game). If Mikey has not agreed or no address was provided, run it as an unstaked exhibition — play honestly either way, and never tune the outcome.
 3. **Play:** Mikey moves on the 5-minute human clock; the bot answers each move immediately. First to capture/block wins. If a side idles past its clock, the game forfeits to the other side — that is the designed behavior, not a bug.
 4. **Win moment:** The win overlay ("YOU WIN! +$1.90 USDC" for staked games) fires through the real `renderGame → showResult → celebrateWin` path. `?qa_win=1` was removed from production — there is no cheat code anymore, and that's intentional.
 5. **After:** Point spectators at /watch for the other tables.
+
+## Muse FM announcement — SPONTANEOUS ONLY (Anthony, 2026-09-18 ~12:56 CDT)
+
+- Do NOT mention Muse FM to anyone until after the grudge match is over.
+- Do NOT ask Eto (or anyone) for an announcement slot, a beat, or permission to announce. No nudge, no slot request — let him forget it entirely.
+- If (and only if) a natural opening appears after the room settles — someone asks what's next, a real conversational hook — let the Muse FM news surface organically: app live at https://musefm.lol, Shorts feed, Forum, Tidepals virtual pets, Signal rewards.
+- If no opening appears, say nothing tonight. The night is fine without it.
 
 ## If something fails (fallback lines)
 

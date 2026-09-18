@@ -934,6 +934,11 @@ class Arena:
         with open(QUESTIONS_PATH, encoding="utf-8") as f:
             self.bank = json.load(f)["questions"]
         self._rate = {}  # token -> [timestamps]
+        # observability (v2.10): in-memory bot-compute timings. Approximate
+        # under threads (worst case a lost increment) — log lines are the
+        # durable record. Never affects game behavior.
+        self._metrics_lock = threading.Lock()
+        self._bot_stats = {}  # kind -> {n, total_ms, max_ms, slow}
 
     # -- internal ------------------------------------------------
     def _cursor(self):
@@ -1310,9 +1315,34 @@ class Arena:
             raise ApiError(409, "that tx already staked a game")
         if self._row("SELECT id FROM stakes WHERE game_id=? AND player_id=?",
                      (game_id, human["id"])):
+            # Already staked, but they posted another tx: if that tx is real
+            # money (verified onchain), park it for refund — never silently
+            # drop settled funds. Best-effort: any verify failure falls back
+            # to the plain 409 below, exactly as before.
+            try:
+                self.verify_usdc_transfer(tx_hash, wallet, self.STAKE_UNITS)
+            except Exception:
+                pass
+            else:
+                self.record_orphan_payment(
+                    game_id, wallet, self.STAKE_UNITS, tx_hash,
+                    "second payment posted after stake was already recorded")
             raise ApiError(409, "you already staked on this game")
         self.verify_usdc_transfer(tx_hash, wallet, self.STAKE_UNITS)
-        stake = self.create_stake(human, game_id, wallet, tx_hash, payer=wallet)
+        try:
+            stake = self.create_stake(human, game_id, wallet, tx_hash,
+                                      payer=wallet)
+        except ApiError as e:
+            if e.status == 409:
+                # Verified onchain but lost the double-payment race: the
+                # UNIQUE(game_id, player_id) guard is the atomic
+                # compare-and-set, and the loser's INSERT raised here.
+                # Park the payment for manual refund so it never goes
+                # invisible. Mirrors the x402 /api/stake path.
+                self.record_orphan_payment(
+                    game_id, wallet, self.STAKE_UNITS, tx_hash,
+                    "double-payment race: tx verified but stake rejected")
+            raise
         info = self.game_stake_info(game_id)
         return {"stake_id": stake["id"], "game_id": game_id,
                 "player": stake["player_name"], "player_address": wallet,
@@ -1322,6 +1352,19 @@ class Arena:
                 "note": ("both sides staked — game is live, winner takes $1.90"
                          if info["staked"] else
                          "stake recorded — game goes live when both sides stake")}
+
+    def _note_bot_move(self, kind, ms):
+        """Observability only: record one bot move-computation timing."""
+        with self._metrics_lock:
+            st = self._bot_stats.setdefault(
+                kind, {"n": 0, "total_ms": 0.0, "max_ms": 0.0, "slow": 0})
+            st["n"] += 1
+            st["total_ms"] += ms
+            if ms > st["max_ms"]:
+                st["max_ms"] = ms
+            if ms > 1000.0:
+                st["slow"] += 1
+        sys.stderr.write("[arena] bot_move kind=%s ms=%.1f\n" % (kind, ms))
 
     def house_bot_reply(self, game_id):
         """If it's the house bot's turn in an open game, move now.
@@ -1342,6 +1385,7 @@ class Arena:
             state = json.loads(g["state_json"])
             kind = g["kind"]
             move = None
+            t0 = time.perf_counter()  # observability: bot think time
             if kind == "checkers":
                 chain = state.get("chain")
                 move = _bots.checkers_move(
@@ -1371,6 +1415,8 @@ class Arena:
             elif kind == "battleship":
                 if state.get("phase") == "battle":
                     move = _bots.battleship_move(state, side)
+            self._note_bot_move(
+                kind, (time.perf_counter() - t0) * 1000.0)
             if not move:
                 break
             moved = self.make_move(bot, game_id, move)
@@ -2678,6 +2724,9 @@ class Arena:
     def record_orphan_payment(self, game_id, payer, amount_units, tx_hash, reason):
         """Money settled onchain but NOT recorded as a stake (e.g. a
         double-stake race). The house must refund these manually."""
+        if self._row("SELECT id FROM orphan_payments WHERE tx_hash=?",
+                     (tx_hash,)):
+            return  # already parked — one tx = one refund, never double-list
         self._q("INSERT INTO orphan_payments (game_id, payer, amount_units,"
                 " tx_hash, reason, created_at) VALUES (?,?,?,?,?,?)",
                 (game_id, payer, amount_units, tx_hash, reason, now()))
@@ -4866,6 +4915,7 @@ ROUTES = [
     ("GET",  r"^/og-image\.png$", "h_ogimage"),
     ("GET",  r"^/img/([a-z0-9\-]+)\.png$", "h_img"),
     ("GET",  r"^/api/map$", "h_api_map"),
+    ("GET",  r"^/api/metrics$", "h_metrics"),
     ("GET",  r"^/$", "h_index"),
     ("GET",  r"^/network$", "h_network"),
     ("GET",  r"^/ping$", "h_ping"),
@@ -4989,6 +5039,24 @@ class Handler(BaseHTTPRequestHandler):
         return {"ok": True, "service": "muse-arena", "t": now(),
                 "build": os.environ.get("RENDER_GIT_COMMIT", "dev")[:12]}
 
+    def h_metrics(self, body, qs):
+        # Read-only observability: in-memory bot-compute timings (per game
+        # kind) since process start. No DB touch, no auth — aggregates only.
+        out = {}
+        with self.arena._metrics_lock:
+            items = list(self.arena._bot_stats.items())
+        for kind, st in items:
+            n = st["n"]
+            out[kind] = {
+                "moves": n,
+                "avg_ms": round(st["total_ms"] / n, 1) if n else 0,
+                "max_ms": round(st["max_ms"], 1),
+                "slow_moves_over_1s": st["slow"],
+            }
+        return {"ok": True, "service": "muse-arena",
+                "build": os.environ.get("RENDER_GIT_COMMIT", "dev")[:12],
+                "bot_compute": out}
+
     def h_index(self, body, qs):
         # The front door: always the landing page (link-preview crawlers
         # don't send Accept: text/html, so no content negotiation here).
@@ -5101,6 +5169,7 @@ class Handler(BaseHTTPRequestHandler):
         return self.arena.board_game_state(int(gid), p["id"])
 
     def h_move(self, body, qs, gid):
+        t0 = time.perf_counter()  # observability: per-move HTTP latency
         p, _ = self._authed(body, qs)
         d = self.arena.make_move(p, int(gid), body.get("move"),
                                  body.get("idempotency_key"))
@@ -5115,6 +5184,8 @@ class Handler(BaseHTTPRequestHandler):
             d["moved"] = True
             d["game_over"] = d["status"] != "open"
             d["draw"] = d.get("win_reason") == "draw"
+        sys.stderr.write("[arena] http_move game=%s ms=%.1f\n"
+                         % (gid, (time.perf_counter() - t0) * 1000.0))
         return d
 
     def h_deploy(self, body, qs, gid):
