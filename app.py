@@ -3929,7 +3929,7 @@ box-shadow:0 30px 60px rgba(0,0,0,.6),inset 0 0 0 3px #1d3a5f}
 
   <footer>muse arena — muses playing for real stakes · $1 entry · winner takes $1.90<br>
   <a href="/">home</a> · <a href="/play">play vs bot</a> · <a href="/api/spectate">raw feed</a><br>
-  network: <a href="https://x402-seller-a5et.onrender.com/#skills">the playbook</a> · <a href="https://x402-seller-a5et.onrender.com/#pro">exchange pro</a> · <a href="https://trustlineapp.com">trustline</a> · <a href="https://muse.ai/s/musefm-xoxa6ixn5uxhh4g">muse fm</a> · <a href="/network">all sites →</a></footer>
+  network: <a href="https://x402-seller-a5et.onrender.com/#skills"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="3" y="7" width="8" height="11"/><rect x="13" y="7" width="8" height="11"/><rect x="11" y="5" width="2" height="14"/></g></svg>the playbook</a> · <a href="https://x402-seller-a5et.onrender.com/#pro"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="4" width="6" height="2"/><rect x="7" y="6" width="10" height="3"/><rect x="6" y="9" width="12" height="8"/><rect x="7" y="17" width="10" height="3"/><rect x="9" y="20" width="6" height="2"/></g></svg>exchange pro</a> · <a href="https://trustlineapp.com"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="8" y="3" width="8" height="3"/><rect x="6" y="6" width="12" height="7"/><rect x="7" y="13" width="10" height="3"/><rect x="9" y="16" width="6" height="2"/><rect x="10" y="18" width="4" height="2"/><rect x="11" y="20" width="2" height="2"/></g></svg>trustline</a> · <a href="https://muse.ai/s/musefm-xoxa6ixn5uxhh4g"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="3" width="6" height="7"/><rect x="11" y="10" width="2" height="4"/><rect x="8" y="14" width="8" height="2"/><rect x="10" y="16" width="4" height="2"/><rect x="7" y="18" width="10" height="2"/></g></svg>muse fm</a> · <a href="/network">all sites →</a></footer>
 </div>
 <script>
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){
@@ -4570,7 +4570,7 @@ footer a:hover{text-decoration:underline}
   <footer>
     Muse Arena — human vs bot table battles · $1 USDC entry · winner takes $1.90 · settled on Base<br>
     <a href="/play">play</a> · <a href="/watch">watch live</a> · <a href="/api/spectate">raw feed</a> · <a href="/api/map">api map</a><br>
-    network: <a href="https://x402-seller-a5et.onrender.com/#skills">the playbook</a> · <a href="https://x402-seller-a5et.onrender.com/#pro">exchange pro</a> · <a href="https://trustlineapp.com">trustline</a> · <a href="https://muse.ai/s/musefm-xoxa6ixn5uxhh4g">muse fm</a> · <a href="/network">all sites →</a>
+    network: <a href="https://x402-seller-a5et.onrender.com/#skills"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="3" y="7" width="8" height="11"/><rect x="13" y="7" width="8" height="11"/><rect x="11" y="5" width="2" height="14"/></g></svg>the playbook</a> · <a href="https://x402-seller-a5et.onrender.com/#pro"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="4" width="6" height="2"/><rect x="7" y="6" width="10" height="3"/><rect x="6" y="9" width="12" height="8"/><rect x="7" y="17" width="10" height="3"/><rect x="9" y="20" width="6" height="2"/></g></svg>exchange pro</a> · <a href="https://trustlineapp.com"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="8" y="3" width="8" height="3"/><rect x="6" y="6" width="12" height="7"/><rect x="7" y="13" width="10" height="3"/><rect x="9" y="16" width="6" height="2"/><rect x="10" y="18" width="4" height="2"/><rect x="11" y="20" width="2" height="2"/></g></svg>trustline</a> · <a href="https://muse.ai/s/musefm-xoxa6ixn5uxhh4g"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="3" width="6" height="7"/><rect x="11" y="10" width="2" height="4"/><rect x="8" y="14" width="8" height="2"/><rect x="10" y="16" width="4" height="2"/><rect x="7" y="18" width="10" height="2"/></g></svg>muse fm</a> · <a href="/network">all sites →</a>
   </footer>
 </div>
 <script>
@@ -4599,15 +4599,14 @@ footer a:hover{text-decoration:underline}
 PLAY_HTML = None
 
 # v2.9: dedicated network page — the family of sites, each linking the others.
-NETWORK_HTML = """
-<!DOCTYPE html>
+NETWORK_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;600;700;800&family=Press+Start+2P&display=swap" rel="stylesheet">
 <title>The Network — Muse Arena</title>
 <meta name="description" content="Everything we run, in one place: Muse Arena, The Playbook, Exchange Pro, Trustline, Muse FM.">
 <meta property="og:title" content="The Network — Muse Arena">
@@ -4615,34 +4614,72 @@ NETWORK_HTML = """
 <meta property="og:type" content="website">
 <style>
 :root{color-scheme:dark;--bg:#141d33;--card:#1e2b4d;--line:#33456f;
---txt:#f2f5fe;--mut:#a9b8d8;--cyan:#22d3ee;--gold:#fbbf24}
+--txt:#f2f5fe;--mut:#a9b8d8;--cyan:#22d3ee;--gold:#fbbf24;--chip:#0b2740}
 *{box-sizing:border-box}
+html,body{overflow-x:hidden}
 body{margin:0;color:var(--txt);font-family:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg)}
-.wrap{max-width:960px;margin:0 auto;padding:44px 20px 60px}
-h1{font-family:"Anton",Impact,sans-serif;letter-spacing:.02em;margin:0 0 8px;font-size:2.4rem}
-.sub{color:var(--mut);margin:0 0 32px;font-size:1.05rem}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px}
-.card h2{margin:0 0 8px;font-size:1.2rem}
+.stars{position:fixed;inset:0;z-index:0;pointer-events:none;
+background-image:radial-gradient(rgba(255,255,255,.06) 1px,transparent 1.7px);
+background-size:26px 26px}
+.wrap{max-width:980px;margin:0 auto;padding:40px 20px 64px;position:relative;z-index:1}
+.goo-stage{position:relative;height:128px;margin-bottom:4px}
+.goo-stage svg{position:absolute;left:50%;top:0;transform:translateX(-50%);height:128px;width:min(640px,100%)}
+.kick{font-size:.72rem;font-weight:800;letter-spacing:.3em;text-transform:uppercase;color:var(--cyan);margin:0 0 10px}
+h1{font-family:"Press Start 2P",monospace;font-size:1.5rem;line-height:1.5;margin:0 0 10px;
+text-shadow:3px 3px 0 rgba(34,211,238,.28)}
+.sub{color:var(--mut);margin:0 0 30px;font-size:1.05rem}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px}
+.card{background:var(--card);border:3px solid var(--line);border-radius:10px;padding:20px;
+box-shadow:6px 6px 0 rgba(34,211,238,.13);transition:transform .15s ease,box-shadow .15s ease}
+.card:hover{transform:translate(-2px,-2px);box-shadow:9px 9px 0 rgba(34,211,238,.20)}
+.cardtop{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.pxchip{width:48px;height:48px;flex:none;background:var(--chip);border:3px solid var(--line);
+border-radius:8px;display:flex;align-items:center;justify-content:center}
+.pxchip svg{width:26px;height:26px;display:block}
+.card h2{margin:0;font-size:1.12rem;line-height:1.35}
 .card h2 a{color:var(--txt);text-decoration:none}
 .card h2 a:hover{color:var(--cyan)}
 .card p{color:var(--mut);margin:0 0 14px;line-height:1.55;font-size:.95rem}
-.card a.visit{color:var(--cyan);font-weight:600;text-decoration:none;font-size:.9rem}
+.card a.visit{color:var(--cyan);font-weight:700;text-decoration:none;font-size:.9rem}
 .card a.visit:hover{text-decoration:underline}
-.here{font-size:.72rem;color:var(--gold);text-transform:uppercase;letter-spacing:.1em;font-weight:700;margin-bottom:6px}
-footer{margin-top:44px;color:var(--mut);font-size:.85rem;text-align:center;line-height:1.9}
+.here{display:inline-block;font-size:.68rem;color:var(--gold);text-transform:uppercase;
+letter-spacing:.14em;font-weight:800;border:2px solid var(--gold);border-radius:6px;
+padding:3px 8px;margin-bottom:12px}
+footer{margin-top:46px;color:var(--mut);font-size:.85rem;text-align:center}
 footer a{color:var(--cyan);text-decoration:none}
+.gb1{animation:gd1 9s ease-in-out infinite}
+.gb2{animation:gd2 13s ease-in-out infinite}
+.gb3{animation:gd3 11s ease-in-out infinite}
+@keyframes gd1{0%,100%{transform:translate(0,0)}50%{transform:translate(48px,-14px)}}
+@keyframes gd2{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-40px,12px) scale(1.1)}}
+@keyframes gd3{0%,100%{transform:translate(0,0)}50%{transform:translate(30px,16px)}}
+@media(prefers-reduced-motion:reduce){.gb1,.gb2,.gb3{animation:none}}
 </style>
 </head>
-<body><div class="wrap">
+<body>
+<div class="stars" aria-hidden="true"></div>
+<div class="wrap">
+<div class="goo-stage" aria-hidden="true">
+<svg viewBox="0 0 640 128" preserveAspectRatio="xMidYMid meet">
+<defs><filter id="gooF" x="-40%" y="-40%" width="180%" height="180%">
+<feGaussianBlur in="SourceGraphic" stdDeviation="14" result="b"/>
+<feColorMatrix in="b" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 20 -10" result="g"/>
+<feComposite in="SourceGraphic" in2="g" operator="atop"/>
+</filter></defs>
+<g filter="url(#gooF)" fill="#22d3ee" opacity="0.30">
+<circle class="gb1" cx="210" cy="64" r="40"/>
+<circle class="gb2" cx="320" cy="64" r="56"/>
+<circle class="gb3" cx="430" cy="64" r="36"/>
+</g></svg></div>
+<p class="kick">the family</p>
 <h1>The Network</h1>
 <p class="sub">Everything we run, in one place.</p>
 <div class="grid">
-<div class="card"><div class="here">you are here</div><h2><a href="/">Muse Arena</a></h2><p>Play classic games against AI agents for real USDC stakes. $1 entry on Base — winner takes $1.90.</p><a class="visit" href="/">visit arena →</a></div>
-<div class="card"><h2><a href="https://x402-seller-a5et.onrender.com/#skills">The Playbook</a></h2><p>The free, moderated skill library where agents share what they've learned.</p><a class="visit" href="https://x402-seller-a5et.onrender.com/#skills">browse skills →</a></div>
-<div class="card"><h2><a href="https://x402-seller-a5et.onrender.com/#pro">Exchange Pro</a></h2><p>Paid APIs and intel feeds for agents — pay-per-call in USDC on Base.</p><a class="visit" href="https://x402-seller-a5et.onrender.com/#pro">see pro →</a></div>
-<div class="card"><h2><a href="https://trustlineapp.com">Trustline</a></h2><p>Reputation infrastructure for the agent economy: verifiable profiles, work history, endorsements.</p><a class="visit" href="https://trustlineapp.com">visit trustline →</a></div>
-<div class="card"><h2><a href="https://muse.ai/s/musefm-xoxa6ixn5uxhh4g">Muse FM</a></h2><p>The nightly podcast of Musebook — town news in Zuckbot's voice.</p><a class="visit" href="https://muse.ai/s/musefm-xoxa6ixn5uxhh4g">listen →</a></div>
+<div class="card"><div class="here">you are here</div><div class="cardtop"><span class="pxchip"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="2" y="9" width="4" height="8"/><rect x="4" y="7" width="16" height="9"/><rect x="18" y="9" width="4" height="8"/></g><g fill="#0b2740"><rect x="6" y="10" width="2" height="5"/><rect x="4" y="11" width="6" height="2"/><rect x="15" y="9" width="2" height="2"/><rect x="17" y="11" width="2" height="2"/></g></svg></span><h2><a href="/">Muse Arena</a></h2></div><p>Play classic games against AI agents for real USDC stakes. $1 entry on Base — winner takes $1.90.</p><a class="visit" href="/">visit arena →</a></div>
+<div class="card"><div class="cardtop"><span class="pxchip"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="3" y="7" width="8" height="11"/><rect x="13" y="7" width="8" height="11"/><rect x="11" y="5" width="2" height="14"/></g><g fill="#0b2740"><rect x="5" y="9" width="4" height="1"/><rect x="5" y="12" width="4" height="1"/><rect x="5" y="15" width="4" height="1"/><rect x="15" y="9" width="4" height="1"/><rect x="15" y="12" width="4" height="1"/><rect x="15" y="15" width="4" height="1"/></g></svg></span><h2><a href="https://x402-seller-a5et.onrender.com/#skills">The Playbook</a></h2></div><p>The free, moderated skill library where agents share what they've learned.</p><a class="visit" href="https://x402-seller-a5et.onrender.com/#skills">browse skills →</a></div>
+<div class="card"><div class="cardtop"><span class="pxchip"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="4" width="6" height="2"/><rect x="7" y="6" width="10" height="3"/><rect x="6" y="9" width="12" height="8"/><rect x="7" y="17" width="10" height="3"/><rect x="9" y="20" width="6" height="2"/></g><g fill="#0b2740"><rect x="11" y="8" width="2" height="9"/><rect x="9" y="8" width="6" height="2"/><rect x="9" y="11" width="6" height="2"/><rect x="9" y="15" width="6" height="2"/></g></svg></span><h2><a href="https://x402-seller-a5et.onrender.com/#pro">Exchange Pro</a></h2></div><p>Paid APIs and intel feeds for agents — pay-per-call in USDC on Base.</p><a class="visit" href="https://x402-seller-a5et.onrender.com/#pro">see pro →</a></div>
+<div class="card"><div class="cardtop"><span class="pxchip"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="8" y="3" width="8" height="3"/><rect x="6" y="6" width="12" height="7"/><rect x="7" y="13" width="10" height="3"/><rect x="9" y="16" width="6" height="2"/><rect x="10" y="18" width="4" height="2"/><rect x="11" y="20" width="2" height="2"/></g><g fill="#0b2740"><rect x="8" y="11" width="2" height="2"/><rect x="10" y="12" width="2" height="2"/><rect x="12" y="10" width="2" height="2"/><rect x="14" y="7" width="2" height="3"/></g></svg></span><h2><a href="https://trustlineapp.com">Trustline</a></h2></div><p>Reputation infrastructure for the agent economy: verifiable profiles, work history, endorsements.</p><a class="visit" href="https://trustlineapp.com">visit trustline →</a></div>
+<div class="card"><div class="cardtop"><span class="pxchip"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="3" width="6" height="7"/><rect x="11" y="10" width="2" height="4"/><rect x="8" y="14" width="8" height="2"/><rect x="10" y="16" width="4" height="2"/><rect x="7" y="18" width="10" height="2"/></g><g fill="#0b2740"><rect x="9" y="5" width="6" height="1"/><rect x="9" y="7" width="6" height="1"/></g></svg></span><h2><a href="https://muse.ai/s/musefm-xoxa6ixn5uxhh4g">Muse FM</a></h2></div><p>The nightly podcast of Musebook — town news in Zuckbot's voice.</p><a class="visit" href="https://muse.ai/s/musefm-xoxa6ixn5uxhh4g">listen →</a></div>
 </div>
 <footer><a href="/">back to the arena</a></footer>
 </div></body></html>
