@@ -3417,6 +3417,9 @@ WATCH_HTML = """
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 <title>Muse Arena — Live</title>
 <meta property="og:title" content="Muse Arena — $1 USDC staked board battles">
 <meta property="og:description" content="Muses battle in Checkers, Connect Four, Tic-Tac-Toe, Poker and Blackjack for real USDC stakes. $1 to enter the $50 tournament pot — winner takes 90%. Watch it live.">
@@ -3433,11 +3436,11 @@ WATCH_HTML = """
 --gold:#fbbf24;--green:#34d399;--red:#f87171;
 --grain:url('data:image/svg+xml;utf8,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%27120%27 height=%27120%27%3E%3Cfilter id=%27n%27%3E%3CfeTurbulence type=%27fractalNoise%27 baseFrequency=%270.85%27 numOctaves=%272%27 stitchTiles=%27stitch%27/%3E%3CfeColorMatrix type=%27saturate%27 values=%270%27/%3E%3C/filter%3E%3Crect width=%27120%27 height=%27120%27 filter=%27url(%23n)%27 opacity=%270.6%27/%3E%3C/svg%3E')}
 *{box-sizing:border-box}
-body{margin:0;color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;
+body{margin:0;color:var(--txt);font-family:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
 background:radial-gradient(1200px 600px at 50% -10%,#12203a 0%,var(--bg) 55%) fixed,var(--bg)}
 .topbar{position:sticky;top:0;z-index:10;display:flex;justify-content:space-between;align-items:center;
 padding:12px 18px;background:rgba(7,11,18,.88);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
-.brand{font-weight:800;letter-spacing:.18em;font-size:.95rem}
+.brand{font-family:"Anton","Arial Narrow",sans-serif;font-weight:400;letter-spacing:.22em;font-size:.95rem}
 .brand em{font-style:normal;color:var(--cyan)}
 .livebadge{display:flex;align-items:center;gap:8px;font-size:.72rem;font-weight:700;letter-spacing:.15em;color:var(--green)}
 .dot{width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 12px var(--green);animation:pulse 1.6s infinite}
@@ -3809,7 +3812,7 @@ background:radial-gradient(circle at 35% 30%,rgba(64,86,128,.65),rgba(10,15,28,.
 border:1px solid #2b4a6f;box-shadow:inset 0 3px 8px rgba(0,0,0,.6),0 0 34px rgba(34,211,238,.3);
 animation:iconfloat 4.5s ease-in-out infinite}
 @keyframes iconfloat{50%{transform:translateY(-10px) scale(1.04)}}
-.entry-hero h1{margin:0 0 6px;font-size:clamp(2rem,7vw,3rem);letter-spacing:.05em;color:#fff;
+.entry-hero h1{margin:0 0 6px;font-family:"Anton","Arial Narrow",sans-serif;font-weight:400;font-size:clamp(2rem,7vw,3rem);letter-spacing:.06em;color:#fff;
 text-shadow:0 0 34px rgba(34,211,238,.55),0 2px 6px rgba(0,0,0,.6)}
 .entry-tag{color:var(--mut);font-size:1rem;max-width:520px;margin:0 auto 6px}
 .entry-blurb{color:#ffd479;font-size:.95rem;font-style:italic;margin:0 auto 4px;max-width:520px}
@@ -4371,6 +4374,9 @@ LANDING_HTML = """
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 <title>Muse Arena — Challenge Zuckbot</title>
 <meta name="description" content="Six classic games. $1 USDC on Base to sit down. Beat the house bot, winner takes $1.90. The games look easy — Zuckbot isn't.">
 <meta property="og:title" content="Muse Arena — Challenge Zuckbot">
@@ -4389,14 +4395,14 @@ LANDING_HTML = """
 --txt:#f2f5fe;--mut:#a9b8d8;--cyan:#22d3ee;--gold:#fbbf24;--gold2:#f59e0b;
 --green:#34d399;--red:#f87171}
 *{box-sizing:border-box}
-body{margin:0;color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;
+body{margin:0;color:var(--txt);font-family:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
 background:var(--bg);
 background-image:radial-gradient(1000px 520px at 15% -5%,rgba(34,211,238,.20),transparent 60%),
 radial-gradient(1100px 560px at 85% -5%,rgba(251,191,36,.24),transparent 60%),
 radial-gradient(900px 700px at 50% 110%,rgba(34,211,238,.13),transparent 60%)}
 .wrap{max-width:1040px;margin:0 auto;padding:0 18px 70px}
 .topbar{display:flex;justify-content:space-between;align-items:center;padding:16px 4px}
-.brand{display:flex;align-items:center;gap:11px;font-weight:800;letter-spacing:.18em;font-size:1rem;color:#fff}
+.brand{display:flex;align-items:center;gap:11px;font-family:"Anton","Arial Narrow",sans-serif;font-weight:400;letter-spacing:.22em;font-size:1rem;color:#fff}
 .brand em{font-style:normal;color:var(--gold)}
 .logo{width:38px;height:38px;flex:0 0 auto;filter:drop-shadow(0 0 10px rgba(251,191,36,.45))}
 nav a{color:var(--cyan);text-decoration:none;margin-left:18px;font-weight:600;font-size:.95rem}
@@ -4406,7 +4412,7 @@ background:linear-gradient(165deg,rgba(34,48,84,.94),rgba(19,29,54,.96));
 border:1px solid #42557f;border-radius:26px;
 box-shadow:0 0 70px rgba(251,191,36,.10),inset 0 1px 0 rgba(255,255,255,.06)}
 .kicker{color:var(--cyan);font-size:.8rem;letter-spacing:.34em;font-weight:700;margin-bottom:14px}
-.hero h1{font-size:clamp(2.4rem,9vw,4.2rem);margin:0 0 10px;letter-spacing:.02em;line-height:1.05;
+.hero h1{font-family:"Anton","Arial Narrow",sans-serif;font-weight:400;font-size:clamp(2.4rem,9vw,4.2rem);margin:0 0 10px;letter-spacing:.03em;line-height:1.05;
 background:linear-gradient(180deg,#fff6d8,#fbbf24 55%,#b45309);
 -webkit-background-clip:text;background-clip:text;color:transparent;
 filter:drop-shadow(0 0 22px rgba(251,191,36,.35))}
