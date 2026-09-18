@@ -248,6 +248,8 @@ body.bsshake #boardZone{animation:bsshake .4s}
   .bs-board .sheen,.bs-board .radar,.bs-cell.fx-ripple::after,.bs-cell.fx-boom::after{display:none!important}
   .bs-cell.fx-sink,.bs-sunkbanner{animation:none!important}
   body.bsshake #boardZone{animation:none}
+  /* demo-night a11y: win celebration must not animate under reduced motion */
+  .win-burst,.win-amount,.confetti{animation:none!important}
 }
 footer{margin-top:26px;color:var(--mut2);font-size:12px;text-align:center;line-height:1.7}
 footer a{color:var(--cyan)}
@@ -564,16 +566,19 @@ function startClock(g){
 }
 function celebrateWin(g){
   if(S._winFx===g.id)return;S._winFx=g.id;
+  var reduceMotion=window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   var ov=document.createElement("div");ov.id="winOverlay";
   var colors=["#f2b01e","#35d07f","#ffffff","#ff5470","#7cc4ff"];
   var html='<div class="win-burst"><div class="win-title">YOU WIN!</div>'+
     '<div class="win-amount">+$1.90 USDC</div>'+
     '<div class="win-sub">$1.90 USDC heads to your wallet shortly</div>'+
     '<button class="btn win-btn">Collect 🎉</button></div>';
-  for(var i=0;i<90;i++){
-    html+='<div class="confetti" style="left:'+(Math.random()*100).toFixed(2)+'%;background:'+colors[i%colors.length]+
-      ';animation-duration:'+(2.2+Math.random()*2.4).toFixed(2)+'s;animation-delay:'+(Math.random()*0.9).toFixed(2)+
-      's;width:'+(6+Math.random()*7).toFixed(0)+'px;height:'+(10+Math.random()*10).toFixed(0)+'px"></div>';
+  if(!reduceMotion){
+    for(var i=0;i<90;i++){
+      html+='<div class="confetti" style="left:'+(Math.random()*100).toFixed(2)+'%;background:'+colors[i%colors.length]+
+        ';animation-duration:'+(2.2+Math.random()*2.4).toFixed(2)+'s;animation-delay:'+(Math.random()*0.9).toFixed(2)+
+        's;width:'+(6+Math.random()*7).toFixed(0)+'px;height:'+(10+Math.random()*10).toFixed(0)+'px"></div>';
+    }
   }
   ov.innerHTML=html;
   var done=false;
