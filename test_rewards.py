@@ -123,6 +123,68 @@ def main():
     g = a.board_game_state(1, p1) if False else None  # games need rooms; skip
     bg_keys = None
 
+    print("dragon pets")
+    r3 = a.register("RWGamma"); p3 = r3["player_id"]
+    # fresh player: early-adopter +25 karma -> lifetime 25, no pets yet
+    start_inv = a.player_rewards(p3)["inventory"]
+    check("no pets at start",
+          not [c for c in start_inv if c.startswith("pet-")], start_inv)
+    a.award_karma(p3, 475, "admin", "pet boost 1")  # lifetime 500
+    inv = a.player_rewards(p3)["inventory"]
+    check("egg unlocked at 500 lifetime karma", "pet-dragon-egg" in inv, inv)
+    check("dragon-tamer trophy awarded",
+          a._has_achievement(p3, "dragon-tamer"))
+    check("hatchling locked below 1500",
+          "pet-dragon-hatchling" not in inv)
+    a.award_karma(p3, 1000, "admin", "pet boost 2")  # lifetime 1500+
+    rows = a._rows("SELECT COUNT(*) c FROM cosmetic_inventory WHERE "
+                   "player_id=? AND cosmetic_id='pet-dragon-egg'", (p3,))
+    check("egg granted exactly once (idempotent)", rows[0]["c"] == 1)
+    inv = a.player_rewards(p3)["inventory"]
+    check("hatchling unlocked at 1500", "pet-dragon-hatchling" in inv)
+    check("balance equals lifetime (nothing decrements)",
+          a.karma_balance(p3) == a._karma_lifetime(p3))
+
+    print("pet equip")
+    lo = a.equip_cosmetic(p3, "pet", "pet-dragon-hatchling")
+    check("equip pet works", lo["pet_id"] == "pet-dragon-hatchling", lo)
+    try:
+        a.equip_cosmetic(p3, "pet", "pet-dragon-full")
+        check("equip unowned pet rejected", False)
+    except app.ApiError as e:
+        check("equip unowned pet rejected", e.status == 403, e.message)
+    try:
+        a.equip_cosmetic(p3, "frame", "pet-dragon-egg")
+        check("pet in wrong slot rejected", False)
+    except app.ApiError as e:
+        check("pet in wrong slot rejected", e.status == 400, e.message)
+
+    print("pet house exclusion")
+    a.award_karma(house, 5000, "admin", "house pet attempt")
+    house_inv = a.player_rewards(house)["inventory"]
+    check("house gets no pets",
+          not [c for c in house_inv if c.startswith("pet-")], house_inv)
+    check("house gets no dragon trophies",
+          not a._has_achievement(house, "dragon-tamer"))
+
+    print("pet full ladder")
+    a.award_karma(p3, 18500, "admin", "pet boost 3")  # lifetime 20000+
+    inv = a.player_rewards(p3)["inventory"]
+    for _th, cid in a.PET_THRESHOLDS:
+        check("owns " + cid, cid in inv)
+    check("dragon-master trophy", a._has_achievement(p3, "dragon-master"))
+    check("dragon-collector trophy",
+          a._has_achievement(p3, "dragon-collector"))
+
+    print("pet flair")
+    f3 = a._flair_for(p3)
+    check("flair pet img", f3["pet"] == "pet-dragon-hatchling.png", f3["pet"])
+    check("flair pet name", f3["pet_name"] == "Dragon Hatchling",
+          f3["pet_name"])
+    fb = a._flair_batch([p3])
+    check("batch flair pet", fb[p3]["pet"] == "pet-dragon-hatchling.png")
+    check("no-pet flair empty", a._flair_for(p1)["pet"] == "")
+
     print("game-finish failure isolation")
     # rewards hook raising must never break game settlement
     orig = a._rewards_on_game_finish
@@ -140,8 +202,8 @@ def main():
         a._rewards_on_game_finish = orig
 
     print("catalog + routes wiring")
-    check("16 achievements", len(a.ACHIEVEMENTS) == 16, len(a.ACHIEVEMENTS))
-    check("19 cosmetics", len(a.COSMETICS) == 19, len(a.COSMETICS))
+    check("19 achievements", len(a.ACHIEVEMENTS) == 19, len(a.ACHIEVEMENTS))
+    check("26 cosmetics", len(a.COSMETICS) == 26, len(a.COSMETICS))
     imgs = {c["img"] for c in a.COSMETICS.values() if c.get("img")}
     missing = [i for i in imgs if not os.path.exists(
         os.path.join(HERE, "assets", i))]
@@ -152,6 +214,58 @@ def main():
               "h_admin_founders_grant", "h_admin_founders_season",
               "h_founders", "h_founders_verify", "h_trophies"):
         check("route " + h, h in routes)
+
+    print("pet routes over HTTP (scratch server)")
+    import subprocess, time, urllib.request, json as _json
+    db2 = tempfile.mktemp(suffix=".db")
+    port = 8487
+    srv = subprocess.Popen(
+        [sys.executable, os.path.join(HERE, "app.py"),
+         "--port", str(port), "--db", db2, "--host", "127.0.0.1"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        for _ in range(60):
+            try:
+                urllib.request.urlopen("http://127.0.0.1:%d/ping" % port,
+                                       timeout=2).read()
+                break
+            except Exception:
+                time.sleep(0.5)
+        def get(path):
+            with urllib.request.urlopen(
+                    "http://127.0.0.1:%d%s" % (port, path),
+                    timeout=10) as r:
+                return r.status, r.read()
+        for img in ("pet-dragon-egg", "pet-dragon-hatchling",
+                    "pet-dragon-wyrmling", "pet-dragon-full",
+                    "pet-dragon-fire", "pet-dragon-frost", "pet-dragon-storm"):
+            st, body = get("/img/%s.png" % img)
+            check("GET /img/%s.png 200" % img,
+                  st == 200 and len(body) > 1000, st)
+        st, body = get("/trophies")
+        check("GET /trophies 200 + Dragon Den",
+              st == 200 and b"Dragon Den" in body, st)
+        st, body = get("/api/rewards/catalog")
+        cat = _json.loads(body)
+        check("catalog pet_thresholds x7",
+              len(cat.get("pet_thresholds", [])) == 7)
+        check("catalog 7 pet cosmetics",
+              sum(1 for c in cat["cosmetics"].values()
+                  if c["slot"] == "pet") == 7)
+        check("catalog 19 achievements", len(cat["achievements"]) == 19)
+        st, body = get("/api/spectate")
+        sp = _json.loads(body)
+        check("spectate flair map present",
+              isinstance(sp.get("flair"), dict))
+        lb = sp.get("leaderboard") or []
+        check("leaderboard rows carry flair",
+              all("flair" in r for r in lb), len(lb))
+    finally:
+        srv.terminate()
+        try:
+            srv.wait(timeout=10)
+        except Exception:
+            srv.kill()
 
     print()
     if fails:

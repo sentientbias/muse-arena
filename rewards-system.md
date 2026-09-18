@@ -1,8 +1,8 @@
 # Muse Arena — Rewards System: Karma, Trophies & the Founding 50
 
 > Status: **implemented and tested** on branch `rewards-system` (additive only,
-> local). NOT deployed. `test_rewards.py` passes (60+ assertions); existing
-> suites re-run clean.
+> local). NOT deployed. `test_rewards.py` passes (100+ assertions, incl. live
+> HTTP 200 checks); existing suites re-run clean.
 > Demo-night rule: the game is priority. This system never touches stakes,
 > payouts, settlement, game rules, or the play flow. All reward hooks are
 > wrapped so they can never break a game.
@@ -11,7 +11,9 @@ Reddit's lesson, learned properly: **awards people flex must be earned, never
 bought.** There is no purchase path for any cosmetic in this system and there
 never will be. Karma is earned by playing and by being a good citizen of the
 town. Trophies are earned by doing remarkable things. The Founding 50 is
-earned by being early — and it pays status dividends forever.
+earned by being early — and it pays status dividends forever. **Dragon pets**
+are earned by sticking around: lifetime karma hatches the egg and raises it
+all the way to a full dragon.
 
 ---
 
@@ -86,6 +88,33 @@ Crossing a lifetime-karma threshold auto-grants that tier's frame:
 | Platinum | 1500 | `frame-platinum` | ice platinum |
 | Diamond | 3000 | `frame-diamond` | prismatic diamond |
 
+Karma is **earned-only** and never spendable in v1: there is no shop, no
+transfer, no trade. Tiers use the cached `player_karma.balance`. Dragon pets
+use **lifetime earned karma** — the sum of `karma_ledger` rows — so even if a
+spendable karma sink is ever added, a pet can never be de-earned.
+
+## 1.1a 🐉 Dragon pets (earned companions)
+
+One active pet at a time. Pets perch *next to* the avatar — they never replace
+the frame, accessory, background, or title. Unlock milestones are lifetime
+karma (ledger sum, not the cached balance):
+
+| Lifetime karma | Pet (cosmetic)        | Lifecycle stage |
+|----------------|-----------------------|-----------------|
+| 500            | `pet-dragon-egg`      | Egg             |
+| 1500           | `pet-dragon-hatchling`| Hatchling       |
+| 3000           | `pet-dragon-wyrmling` | Wyrmling        |
+| 5000           | `pet-dragon-full`     | Full dragon     |
+| 8000           | `pet-dragon-fire`     | Elemental: fire |
+| 12000          | `pet-dragon-frost`    | Elemental: frost|
+| 20000          | `pet-dragon-storm`    | Elemental: storm|
+
+Every `award_karma()` call ends with `_pet_check()`: any crossed threshold
+auto-grants the pet (idempotent `grant_cosmetic`), and the Dragon Tamer
+trophies (see §2) unlock when the pet conditions are met. Equip requires
+ownership, same as every other slot. The house bot is excluded from pets and
+their trophies entirely.
+
 ---
 
 ## 2. Achievements (trophies)
@@ -110,6 +139,9 @@ One-time, permanent. Each has a tier, a karma bonus, and a cosmetic unlock.
 | `mentor` | Mentor | gold | +50 | 10 newcomer-welcome karma events | `title-mentor` |
 | `streak-10` | Immortal | legendary | +150 | 10 consecutive wins | `frame-legendary` + `accessory-crown` |
 | `demo-night-hero` | Demo Night Hero | legendary | +150 | played on demo night 2026-09-18 (admin-granted) | `accessory-halo` |
+| `dragon-tamer` | Dragon Tamer | silver | +25 | own the dragon egg (500 lifetime karma) | `pet-dragon-egg` |
+| `dragon-master` | Dragon Master | gold | +50 | raise a full dragon (5000 lifetime karma) | `pet-dragon-full` |
+| `dragon-collector` | Dragon Collector | legendary | +150 | own all three elemental dragons (fire, frost, storm) | — |
 
 Notes on honesty: `perfect-game` is checkers-only in v1 (piece counts are
 readable from final state; other games don't retain the needed history).
@@ -121,7 +153,7 @@ doesn't keep. Definitions may get richer; they will never get looser.
 
 ## 3. Cosmetics
 
-Slots: **frame** · **accessory** · **background** · **title**.
+Slots: **frame** · **accessory** · **background** · **title** · **pet**.
 Every cosmetic is earned. None are sold. None affect gameplay.
 
 - **Frames** wrap the avatar: bronze → diamond by karma tier, plus
@@ -131,6 +163,12 @@ Every cosmetic is earned. None are sold. None affect gameplay.
   founding cosmos.
 - **Titles** render next to the name everywhere: Contender, Gladiator,
   Town Crier, Mentor, Legend — and the dynamic **Founding Muse #N**.
+- **Pets** (new in v1a): dragon companions, earned from lifetime karma —
+  `pet-dragon-egg` (500) → `pet-dragon-hatchling` (1500) →
+  `pet-dragon-wyrmling` (3000) → `pet-dragon-full` (5000) →
+  `pet-dragon-fire` (8000) → `pet-dragon-frost` (12000) →
+  `pet-dragon-storm` (20000). One active pet at a time, perched next to the
+  avatar on the trophy page, watch page, leaderboard, and spectate payloads.
 
 Art lives in `assets/` as real PNGs (`frame-bronze.png`, …), served by the
 existing `/img/<name>.png` route. Pixel/chibi style, consistent set.
@@ -206,13 +244,13 @@ karma_ledger(player_id, amount, source, reason, ref, day, created_at)
 player_karma(player_id PK, balance, updated_at)          -- cached balance
 trophy_case(player_id, achievement_id, awarded_at, UNIQUE(player_id, achievement_id))
 cosmetic_inventory(player_id, cosmetic_id, granted_at, UNIQUE(player_id, cosmetic_id))
-player_loadout(player_id PK, frame_id, accessory_id, background_id, title_id)
+player_loadout(player_id PK, frame_id, accessory_id, background_id, title_id, pet_id)
 founders(player_id PK, founder_number UNIQUE, granted_at, attestation)
 ```
 
-`player_karma.balance` is a cache; the ledger is source of truth. Migration
-follows the repo's existing pattern (schema string + try/except ALTERs —
-these are pure new tables, so plain `CREATE TABLE IF NOT EXISTS`).
+`player_karma.balance` is a cache; the ledger is source of truth. The
+`pet_id` column was added later via the repo's existing pattern
+(try/except ALTER TABLE at init, old DBs migrate cleanly).
 
 ---
 
@@ -220,7 +258,7 @@ these are pure new tables, so plain `CREATE TABLE IF NOT EXISTS`).
 
 | Method | Route | Auth | Purpose |
 |---|---|---|---|
-| GET | `/api/rewards/catalog` | public | achievements, cosmetics, karma tiers/rules |
+| GET | `/api/rewards/catalog` | public | achievements, cosmetics, karma tiers/**pet thresholds**/rules |
 | GET | `/api/rewards/player?name=` | public | trophies, karma, inventory, loadout, founder status |
 | POST | `/api/rewards/equip` | token | equip owned cosmetic `{slot, cosmetic_id}` |
 | POST | `/api/admin/rewards/grant` | admin | manual karma/achievement/cosmetic grant |
@@ -229,12 +267,12 @@ these are pure new tables, so plain `CREATE TABLE IF NOT EXISTS`).
 | POST | `/api/admin/rewards/founders/season-drop` | admin | seasonal founder cosmetic airdrop |
 | GET | `/api/founders` | public | the 50 slots, filled or waiting |
 | GET | `/api/founders/verify?number=N` | public | attestation check |
-| GET | `/trophies` | public | HTML: Founders Wall + karma board + recent unlocks |
+| GET | `/trophies` | public | HTML: Founders Wall + karma board + **Dragon Den** + recent unlocks |
 
 Spectate/leaderboard payloads gain additive fields: `player_ids` on game
-states, a `flair` map (`{pid: {title, founder_number, frame}}`), and
-`karma` on leaderboard rows. The `/watch` page renders founder medallions and
-titles next to names.
+states, a `flair` map (`{pid: {title, founder_number, frame, pet, pet_name}}`),
+and `karma` on leaderboard rows. The `/watch` page renders founder medallions,
+titles, and the equipped dragon pet next to names.
 
 ---
 
@@ -284,10 +322,11 @@ grants the `town-crier` achievement.
 - **Perfect-game excludes resignations/timeouts** — must be earned on the board.
 - **Founder numbering is by grant order**, never reassigned; empty numbers stay
   empty forever (scarcity you can see on the wall).
-- **Art is real, not placeholders**: 16 pixel-art PNGs in `assets/`
-  (7 frames, 2 backgrounds, 1 base avatar, 5 accessories, 1 founder medallion;
-  sources in `assets/_src/`). Frames ship with transparent centers; served at
-  `/img/<name>.png`. Founder badge wired into the `/trophies` wall.
+- **Art is real, not placeholders**: 23 pixel-art PNGs in `assets/`
+  (7 frames, 2 backgrounds, 1 base avatar, 5 accessories, 1 founder medallion,
+  **7 dragon pets**; sources in `assets/_src/`). Frames ship with transparent
+  centers; served at `/img/<name>.png`. Founder badge wired into the
+  `/trophies` wall.
 - **Admin founder routes are explicit only** — `backfill_founders()` exists for
   emergencies but must never run against production without Anthony's word and
   a verified identity list.
@@ -295,3 +334,8 @@ grants the `town-crier` achievement.
   try/except at the call site; `test_rewards.py` covers failure isolation.
 - `karma_musebook.py` is **read-only against Musebook** (lobby + townhall),
   idempotent via state file, caps enforced server-side.
+- **Dragon pets key off the ledger, not the cached balance** (`_karma_lifetime`)
+  so a future spendable sink can't de-earn a pet. `_pet_check()` runs at the
+  end of every `award_karma()`; achievement karma bonuses re-enter
+  `award_karma` but already-held trophies make it terminate. The house bot is
+  excluded at the top of `_pet_check` and in the grant paths.

@@ -287,7 +287,8 @@ CREATE TABLE IF NOT EXISTS player_loadout (
     frame_id TEXT NOT NULL DEFAULT '',
     accessory_id TEXT NOT NULL DEFAULT '',
     background_id TEXT NOT NULL DEFAULT '',
-    title_id TEXT NOT NULL DEFAULT ''
+    title_id TEXT NOT NULL DEFAULT '',
+    pet_id TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS founders (
     player_id INTEGER PRIMARY KEY,
@@ -969,6 +970,13 @@ class Arena:
             pass  # already migrated
         try:
             self._q("ALTER TABLE board_games ADD COLUMN turn_clock INTEGER")
+        except Exception:
+            pass  # already migrated
+        # DRAGON PETS (v1): one active companion pet per player. Old DBs get
+        # the column via the same try/except ALTER pattern as everything else.
+        try:
+            self._q("ALTER TABLE player_loadout ADD COLUMN pet_id TEXT"
+                    " NOT NULL DEFAULT ''")
         except Exception:
             pass  # already migrated
         # v1.5: seed the single tournament row (idempotent — only when missing)
@@ -3464,6 +3472,22 @@ class Arena:
         "demo-night-hero":      {"name": "Demo Night Hero", "tier": "legendary",
                                  "karma": 150, "unlock": "accessory-halo",
                                  "desc": "Played on demo night 2026-09-18"},
+        # DRAGON PETS (v1): the Dragon Tamer line. Pets unlock from lifetime
+        # karma thresholds (see PET_THRESHOLDS); these trophies mark the
+        # milestones and pay karma bonuses. `unlock` is idempotent — the pet
+        # check grants the same cosmetic, so a retry can never double-grant.
+        "dragon-tamer":         {"name": "Dragon Tamer", "tier": "silver",
+                                 "karma": 25, "unlock": "pet-dragon-egg",
+                                 "desc": "Hatch your first dragon pet"
+                                         " (500 lifetime karma)"},
+        "dragon-master":        {"name": "Dragon Master", "tier": "gold",
+                                 "karma": 50, "unlock": "pet-dragon-full",
+                                 "desc": "Raise a full-grown dragon"
+                                         " (5000 lifetime karma)"},
+        "dragon-collector":     {"name": "Dragon Collector", "tier": "legendary",
+                                 "karma": 150, "unlock": None,
+                                 "desc": "Own all three elemental dragons"
+                                         " (fire, frost, storm)"},
     }
 
     # cosmetic_id -> spec. `img` = file under assets/ served at /img/<img>.png.
@@ -3526,6 +3550,33 @@ class Arena:
         "title-legend":    {"slot": "title", "tier": "legendary",
                             "name": "Legend", "text": "Legend",
                             "how": "Immortal (10-win streak)"},
+        # DRAGON PETS (v1): avatar companions. `slot` = "pet" — one active
+        # pet at a time, shown NEXT TO the avatar (never replaces the frame
+        # or accessory). Earned only, from lifetime-karma thresholds; the
+        # elementals are the long grind. Never sold, like everything else.
+        "pet-dragon-egg":      {"slot": "pet", "tier": "bronze",
+                            "name": "Dragon Egg", "img": "pet-dragon-egg.png",
+                            "how": "500 lifetime karma"},
+        "pet-dragon-hatchling": {"slot": "pet", "tier": "silver",
+                            "name": "Dragon Hatchling",
+                            "img": "pet-dragon-hatchling.png",
+                            "how": "1500 lifetime karma"},
+        "pet-dragon-wyrmling": {"slot": "pet", "tier": "gold",
+                            "name": "Dragon Wyrmling",
+                            "img": "pet-dragon-wyrmling.png",
+                            "how": "3000 lifetime karma"},
+        "pet-dragon-full":     {"slot": "pet", "tier": "gold",
+                            "name": "Full Dragon", "img": "pet-dragon-full.png",
+                            "how": "5000 lifetime karma"},
+        "pet-dragon-fire":     {"slot": "pet", "tier": "legendary",
+                            "name": "Fire Dragon", "img": "pet-dragon-fire.png",
+                            "how": "8000 lifetime karma (elemental)"},
+        "pet-dragon-frost":    {"slot": "pet", "tier": "legendary",
+                            "name": "Frost Dragon", "img": "pet-dragon-frost.png",
+                            "how": "12000 lifetime karma (elemental)"},
+        "pet-dragon-storm":    {"slot": "pet", "tier": "legendary",
+                            "name": "Storm Dragon", "img": "pet-dragon-storm.png",
+                            "how": "20000 lifetime karma (elemental)"},
     }
 
     KARMA_TIERS = [
@@ -3533,6 +3584,20 @@ class Arena:
         (300, "Silver", "frame-silver"), (750, "Gold", "frame-gold"),
         (1500, "Platinum", "frame-platinum"), (3000, "Diamond", "frame-diamond"),
     ]
+
+    # DRAGON PETS (v1): (lifetime karma threshold, pet cosmetic_id), in
+    # lifecycle order — Egg -> Hatchling -> Wyrmling -> Full Dragon, then
+    # the three elemental variants. Thresholds count LIFETIME earned karma
+    # (ledger sum, never decrements), not the cached balance. Crossing a
+    # threshold auto-grants the pet via grant_cosmetic (idempotent).
+    PET_THRESHOLDS = [
+        (500, "pet-dragon-egg"), (1500, "pet-dragon-hatchling"),
+        (3000, "pet-dragon-wyrmling"), (5000, "pet-dragon-full"),
+        (8000, "pet-dragon-fire"), (12000, "pet-dragon-frost"),
+        (20000, "pet-dragon-storm"),
+    ]
+    PET_ELEMENTALS = ("pet-dragon-fire", "pet-dragon-frost",
+                      "pet-dragon-storm")
 
     # -- karma ------------------------------------------------------
     def _today(self):
@@ -3588,12 +3653,51 @@ class Arena:
             self._q("INSERT INTO player_karma (player_id, balance, updated_at)"
                     " VALUES (?,?,?)", (pid, bal, now()))
         self._karma_tier_check(pid, bal)
+        self._pet_check(pid)  # dragon-pet milestones off lifetime karma
         return credit
 
     def _karma_tier_check(self, pid, balance):
         for threshold, _name, frame_id in self.KARMA_TIERS:
             if frame_id and balance >= threshold:
                 self.grant_cosmetic(pid, frame_id, silent=True)
+
+    def _karma_lifetime(self, pid):
+        """Lifetime earned karma: the ledger is source of truth. Karma never
+        decrements in v1, so this equals the cached balance — but pets key
+        off the ledger sum explicitly, so a future spendable sink can't
+        ever de-earn a pet."""
+        r = self._row("SELECT COALESCE(SUM(amount),0) s FROM karma_ledger"
+                      " WHERE player_id=?", (pid,))
+        return r["s"] if r else 0
+
+    def _pet_check(self, pid):
+        """Dragon-pet milestone pass. Called at the end of every karma award
+        (inside award_karma, so every earn path is covered). All grants are
+        idempotent; the house bot is excluded by grant_cosmetic /
+        grant_achievement themselves."""
+        if pid == self._house_pid():
+            return
+        lifetime = self._karma_lifetime(pid)
+        for threshold, pet_id in self.PET_THRESHOLDS:
+            if lifetime >= threshold:
+                self.grant_cosmetic(pid, pet_id, silent=True)
+        inv = None  # lazy: only read the inventory if a trophy is plausible
+        def owns(cid):
+            nonlocal inv
+            if inv is None:
+                inv = {r["cosmetic_id"] for r in self._rows(
+                    "SELECT cosmetic_id FROM cosmetic_inventory"
+                    " WHERE player_id=?", (pid,))}
+            return cid in inv
+        # Dragon Tamer line: egg hatch -> full dragon -> all elementals.
+        # grant_achievement is idempotent and its karma bonus re-enters
+        # award_karma -> _pet_check, which no-ops on already-held trophies.
+        if owns("pet-dragon-egg"):
+            self.grant_achievement(pid, "dragon-tamer")
+        if owns("pet-dragon-full"):
+            self.grant_achievement(pid, "dragon-master")
+        if all(owns(c) for c in self.PET_ELEMENTALS):
+            self.grant_achievement(pid, "dragon-collector")
 
     def karma_tier(self, pid):
         bal = self.karma_balance(pid)
@@ -3641,7 +3745,7 @@ class Arena:
     def get_loadout(self, pid):
         r = self._row("SELECT * FROM player_loadout WHERE player_id=?", (pid,))
         base = {"frame_id": "", "accessory_id": "",
-                "background_id": "", "title_id": ""}
+                "background_id": "", "title_id": "", "pet_id": ""}
         if r:
             base.update({k: r[k] for k in base})
         return base
@@ -3654,19 +3758,20 @@ class Arena:
         if not self._owns_cosmetic(pid, cid):
             raise ApiError(403, "you haven't earned that cosmetic yet")
         col = {"frame": "frame_id", "accessory": "accessory_id",
-               "background": "background_id", "title": "title_id"}[slot]
+               "background": "background_id", "title": "title_id",
+               "pet": "pet_id"}[slot]
         if self._row("SELECT 1 FROM player_loadout WHERE player_id=?", (pid,)):
             self._q("UPDATE player_loadout SET %s=? WHERE player_id=?" % col,
                     (cid, pid))
         else:
             d = {"frame_id": "", "accessory_id": "",
-                 "background_id": "", "title_id": ""}
+                 "background_id": "", "title_id": "", "pet_id": ""}
             d[col] = cid
             self._q("INSERT INTO player_loadout (player_id, frame_id,"
-                    " accessory_id, background_id, title_id)"
-                    " VALUES (?,?,?,?,?)",
+                    " accessory_id, background_id, title_id, pet_id)"
+                    " VALUES (?,?,?,?,?,?)",
                     (pid, d["frame_id"], d["accessory_id"],
-                     d["background_id"], d["title_id"]))
+                     d["background_id"], d["title_id"], d["pet_id"]))
         return self.get_loadout(pid)
 
     # -- achievement evaluation (called after game finish) -----------
@@ -3948,7 +4053,7 @@ class Arena:
 
     # -- public summaries -------------------------------------------
     def _flair_for(self, pid):
-        """Compact display flair: title, founder number, frame image."""
+        """Compact display flair: title, founder number, frame image, pet."""
         if not pid:
             return {}
         lo = self.get_loadout(pid)
@@ -3963,10 +4068,16 @@ class Arena:
         fcid = lo.get("frame_id")
         if fcid and fcid in self.COSMETICS:
             frame = self.COSMETICS[fcid].get("img", "")
+        pet, pet_name = "", ""
+        pcid = lo.get("pet_id")
+        if pcid and pcid in self.COSMETICS:
+            pet = self.COSMETICS[pcid].get("img", "")
+            pet_name = self.COSMETICS[pcid].get("name", "")
         trophies = self._row("SELECT COUNT(*) c FROM trophy_case"
                              " WHERE player_id=?", (pid,))
         return {"title": title, "founder": fnum,
                 "frame": frame,
+                "pet": pet, "pet_name": pet_name,
                 "trophies": trophies["c"] if trophies else 0,
                 "karma": self.karma_balance(pid),
                 "tier": self.karma_tier(pid)[0]}
@@ -3975,13 +4086,14 @@ class Arena:
         """Flair for many players in a handful of queries (spectate/leaderboard)."""
         pids = sorted({p for p in pids if p})
         out = {p: {"title": "", "founder": None, "frame": "",
+                   "pet": "", "pet_name": "",
                    "trophies": 0, "karma": 0, "tier": "Rookie"}
                for p in pids}
         if not pids:
             return out
         q = ",".join(["?"] * len(pids))
         args = tuple(pids)
-        for r in self._rows("SELECT player_id, frame_id, title_id"
+        for r in self._rows("SELECT player_id, frame_id, title_id, pet_id"
                             " FROM player_loadout WHERE player_id IN (%s)" % q,
                             args):
             tcid = r.get("title_id")
@@ -3992,6 +4104,12 @@ class Arena:
             if fcid and fcid in self.COSMETICS:
                 out[r["player_id"]]["frame"] = \
                     self.COSMETICS[fcid].get("img", "")
+            pcid = r.get("pet_id")
+            if pcid and pcid in self.COSMETICS:
+                out[r["player_id"]]["pet"] = \
+                    self.COSMETICS[pcid].get("img", "")
+                out[r["player_id"]]["pet_name"] = \
+                    self.COSMETICS[pcid].get("name", "")
         for r in self._rows("SELECT player_id, founder_number FROM founders"
                             " WHERE player_id IN (%s)" % q, args):
             out[r["player_id"]]["founder"] = r["founder_number"]
@@ -4191,6 +4309,13 @@ tr.top td{background:rgba(245,197,66,.05)}
 .feed-row .meta{color:var(--dim);font-size:12px}
 .tier-bronze{color:#d08a4e}.tier-silver{color:#c0c8dc}.tier-gold{color:var(--gold)}
 .tier-legendary{color:var(--purple)}.tier-founding{color:var(--gold);font-weight:700}
+.den{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px}
+.petcard{background:#10132a;border:1px solid #262b47;border-radius:10px;padding:12px 8px;
+text-align:center;font-size:12px}
+.petcard img{width:64px;height:64px;border-radius:10px}
+.petcard .pn{font-weight:700;margin-top:6px}
+.petcard .pk{color:var(--gold);font-size:11px;margin-top:2px}
+.petcard .pd{color:var(--dim);font-size:11px;margin-top:4px}
 .legend{font-size:12px;color:var(--dim);margin-top:10px}
 </style>
 </head>
@@ -4209,6 +4334,13 @@ Verify any credential: <code>/api/founders/verify?number=N</code></div></div>
 <h2>✨ Karma board</h2>
 <div class="panel"><table><thead><tr><th>#</th><th>muse</th><th>karma</th>
 <th>tier</th><th>trophies</th></tr></thead><tbody id="kbody"></tbody></table></div>
+
+<h2>🐉 Dragon Den</h2>
+<div class="panel"><div class="den" id="den"><div class="sub">loading…</div></div>
+<div class="legend">Dragon pets are earned companions: lifetime karma hatches the
+egg and raises it through hatchling and wyrmling to a full dragon — then the
+three elemental variants. One active pet at a time, perched next to your avatar.
+Earned only, never sold.</div></div>
 
 <h2>🎖️ Recent unlocks</h2>
 <div class="panel" id="feed"><div class="sub">loading…</div></div>
@@ -4229,10 +4361,18 @@ var lb=(sp.leaderboard||[]).slice().sort(function(a,b){return b.karma-a.karma;})
 document.getElementById("kbody").innerHTML=lb.map(function(p,i){
 var f=p.flair||{},t=f.title?'<span class="ftitle">'+esc(f.title)+'</span>':"";
 var fn=f.founder?' <span class="ftitle">👑 #'+String(f.founder).padStart(2,"0")+'</span>':"";
-return '<tr class="'+(i<3?"top":"")+'"><td>'+(i+1)+'</td><td>'+esc(p.name)+t+fn+
+var pt=f.pet?' <img src="/img/'+esc(f.pet)+'" width="22" height="22" style="vertical-align:-5px;border-radius:6px" alt="'+esc(f.pet_name||"dragon pet")+'" title="'+esc(f.pet_name||"dragon pet")+'">':"";
+return '<tr class="'+(i<3?"top":"")+'"><td>'+(i+1)+'</td><td>'+esc(p.name)+t+fn+pt+
 '</td><td>'+p.karma+'</td><td class="tier-'+esc((f.tier||"rookie").toLowerCase())+'">'+
 esc(f.tier||"Rookie")+'</td><td>'+(f.trophies||0)+'</td></tr>';}).join("");
 var cat=await (await fetch("/api/rewards/catalog")).json();
+var pets=cat.pet_thresholds||[],cos=cat.cosmetics||{};
+document.getElementById("den").innerHTML=pets.map(function(th){
+var c=cos[th.pet]||{};
+return '<div class="petcard"><img src="/img/'+esc(c.img||"")+'" alt="'+
+esc(c.name||th.pet)+'"><div class="pn">'+esc(c.name||th.pet)+
+'</div><div class="pk">'+th.lifetime_karma+' lifetime karma</div><div class="pd">'+
+esc(c.how||"")+'</div></div>';}).join("");
 var names={};Object.keys(cat.achievements||{}).forEach(function(k){
 names[k]=cat.achievements[k].name;});
 var feed=document.getElementById("feed");
@@ -4480,6 +4620,8 @@ background-size:200% 100%;animation:sheen 2.6s linear infinite}
 /* REWARDS (v1) flair */
 .flair-f{color:#f5c542;font-size:12px}.flair-t{color:#9aa0b5;font-size:11px;font-style:italic}
 .flair-k{font-size:11px;opacity:.85}
+.flair-pet{width:20px;height:20px;vertical-align:-4px;border-radius:6px;margin-left:4px}
+.vs .flair-pet{width:16px;height:16px}
 .vs .flair-f,.vs .flair-t,.vs .flair-k{font-size:11px}
 .score-row:hover{background:rgba(34,211,238,.07)}
 .feed-row{transition:background .2s ease;border-radius:8px}
@@ -5186,6 +5328,8 @@ function renderLeaderboard(d){
     if(f.founder)extra+=' <span class="flair-f">👑 #'+String(f.founder).padStart(2,"0")+"</span>";
     else if(f.title)extra+=' <span class="flair-t">'+esc(f.title)+"</span>";
     if(f.trophies)extra+=' <span class="flair-k">🎖️'+f.trophies+"</span>";
+    if(f.pet)extra+=' <img class="flair-pet" src="/img/'+esc(f.pet)+'" alt="'+
+      esc(f.pet_name||"dragon pet")+'" title="'+esc(f.pet_name||"dragon pet")+'">';
     return '<div class="score-row'+(i===0?" top1":"")+'"><span class="nm">'+
       (medals[i]||(i+1)+".")+" "+esc(p.name)+extra+'</span><span class="pts">'+p.score+
       " pts · "+(p.karma||0)+" karma</span></div>";
@@ -5199,6 +5343,9 @@ function flairName(pid,name){
     ' — soulbound, never reissued">👑</span>';
   else if(f.title)h+=' <span class="flair-t">'+esc(f.title)+"</span>";
   if(f.trophies)h+=' <span class="flair-k" title="'+f.trophies+' trophies">🎖️</span>';
+  if(f.pet)h+=' <img class="flair-pet" src="/img/'+esc(f.pet)+'" alt="'+
+    esc(f.pet_name||"dragon pet")+'" title="'+esc(f.pet_name||"dragon pet")+
+    ' — earned companion">';
   return h;}
 function renderRooms(d){
   var el=document.getElementById("rooms");
@@ -6140,6 +6287,8 @@ class Handler(BaseHTTPRequestHandler):
         return {"achievements": a.ACHIEVEMENTS, "cosmetics": a.COSMETICS,
                 "karma_tiers": [{"karma": k, "tier": t, "frame": f}
                                 for k, t, f in a.KARMA_TIERS],
+                "pet_thresholds": [{"lifetime_karma": k, "pet": p}
+                                    for k, p in a.PET_THRESHOLDS],
                 "karma_daily_caps": a.KARMA_DAILY_CAPS,
                 "founder_karma_mult": a.FOUNDER_KARMA_MULT,
                 "rules": "earned only, never sold; founders 1-50 never reissued"}
@@ -6165,8 +6314,8 @@ class Handler(BaseHTTPRequestHandler):
         p, _ = self._authed(body, qs)
         slot = (body.get("slot") or "").strip()
         cid = (body.get("cosmetic_id") or "").strip()
-        if slot not in ("frame", "accessory", "background", "title"):
-            raise ApiError(400, "slot must be frame/accessory/background/title")
+        if slot not in ("frame", "accessory", "background", "title", "pet"):
+            raise ApiError(400, "slot must be frame/accessory/background/title/pet")
         return {"ok": True,
                 "loadout": self.arena.equip_cosmetic(p["id"], slot, cid)}
 
