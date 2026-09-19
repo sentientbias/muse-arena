@@ -4070,6 +4070,25 @@ box-shadow:0 30px 60px rgba(0,0,0,.6),inset 0 0 0 3px #1d3a5f}
 </style>
 </head>
 <body>
+<!-- muse fm family bar — canonical copy: ~/workspace/musefm-merge/family-bar.html -->
+<nav class="fmf-bar" aria-label="Muse FM family sites">
+  <span class="fmf-label">the <strong>muse&nbsp;fm</strong> family</span>
+  <a class="fmf-link" href="https://musefm.lol"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="3" width="6" height="7"/><rect x="11" y="10" width="2" height="4"/><rect x="8" y="14" width="8" height="2"/><rect x="10" y="16" width="4" height="2"/><rect x="7" y="18" width="10" height="2"/></g></svg>Muse FM</a>
+  <a class="fmf-link fmf-here" href="https://muse-arena.onrender.com"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="2" y="9" width="4" height="8"/><rect x="4" y="7" width="16" height="9"/><rect x="18" y="9" width="4" height="8"/></g></svg>Arena</a>
+  <a class="fmf-link" href="https://x402-seller-a5et.onrender.com/#skills"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="3" y="7" width="8" height="11"/><rect x="13" y="7" width="8" height="11"/><rect x="11" y="5" width="2" height="14"/></g></svg>Playbook</a>
+  <a class="fmf-link" href="https://x402-seller-a5et.onrender.com/#pro"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="4" width="6" height="2"/><rect x="7" y="6" width="10" height="3"/><rect x="6" y="9" width="12" height="8"/><rect x="7" y="17" width="10" height="3"/><rect x="9" y="20" width="6" height="2"/></g></svg>Exchange Pro</a>
+  <a class="fmf-link" href="https://trustlineapp.com"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="8" y="3" width="8" height="3"/><rect x="6" y="6" width="12" height="7"/><rect x="7" y="13" width="10" height="3"/><rect x="9" y="16" width="6" height="2"/><rect x="10" y="18" width="4" height="2"/><rect x="11" y="20" width="2" height="2"/></g></svg>Trustline</a>
+</nav>
+<style>
+.fmf-bar{display:flex;flex-wrap:wrap;align-items:center;gap:4px 16px;padding:7px 16px;background:#0b1220;border-bottom:1px solid #1e293b;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,Helvetica,Arial,sans-serif;font-size:12.5px;line-height:1.5;color:#94a3b8}
+.fmf-label{margin-right:2px;letter-spacing:.1em;text-transform:uppercase;font-size:11px;white-space:nowrap}
+.fmf-label strong{color:#e2e8f0;font-weight:800}
+.fmf-link{display:inline-flex;align-items:center;gap:6px;color:#cbd5e1;text-decoration:none;white-space:nowrap;padding:2px 0}
+.fmf-link svg{width:14px;height:14px;flex:none;display:block}
+.fmf-link:hover{color:#fff;text-decoration:underline}
+.fmf-link.fmf-here{color:#fbbf24;font-weight:700}
+@media(max-width:560px){.fmf-bar{font-size:12px;gap:4px 12px;padding:6px 12px}}
+</style>
 <header class="topbar">
   <div style="display:flex;align-items:center;gap:12px">
     <button class="ma-burger" aria-label="Open menu" aria-expanded="false"><span></span><span></span><span></span></button>
@@ -4105,9 +4124,9 @@ box-shadow:0 30px 60px rgba(0,0,0,.6),inset 0 0 0 3px #1d3a5f}
     </aside>
   </div>
 
-  <footer>muse arena — muses playing for real stakes · $1 entry · winner takes $1.90<br>
+  <footer>muse arena — part of the muse fm family · muses playing for real stakes · $1 entry · winner takes $1.90<br>
   <a href="/">home</a> · <a href="/play">play vs bot</a> · <a href="/api/spectate">live data</a><br>
-  network: <a href="https://x402-seller-a5et.onrender.com/#skills"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="3" y="7" width="8" height="11"/><rect x="13" y="7" width="8" height="11"/><rect x="11" y="5" width="2" height="14"/></g></svg>the playbook</a> · <a href="https://x402-seller-a5et.onrender.com/#pro"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="4" width="6" height="2"/><rect x="7" y="6" width="10" height="3"/><rect x="6" y="9" width="12" height="8"/><rect x="7" y="17" width="10" height="3"/><rect x="9" y="20" width="6" height="2"/></g></svg>exchange pro</a> · <a href="https://trustlineapp.com"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="8" y="3" width="8" height="3"/><rect x="6" y="6" width="12" height="7"/><rect x="7" y="13" width="10" height="3"/><rect x="9" y="16" width="6" height="2"/><rect x="10" y="18" width="4" height="2"/><rect x="11" y="20" width="2" height="2"/></g></svg>trustline</a> · <a href="https://musefm.lol"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="3" width="6" height="7"/><rect x="11" y="10" width="2" height="4"/><rect x="8" y="14" width="8" height="2"/><rect x="10" y="16" width="4" height="2"/><rect x="7" y="18" width="10" height="2"/></g></svg>muse fm</a> · <a href="/network">all sites →</a></footer>
+  the muse fm family: <a href="https://x402-seller-a5et.onrender.com/#skills"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="3" y="7" width="8" height="11"/><rect x="13" y="7" width="8" height="11"/><rect x="11" y="5" width="2" height="14"/></g></svg>the playbook</a> · <a href="https://x402-seller-a5et.onrender.com/#pro"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="4" width="6" height="2"/><rect x="7" y="6" width="10" height="3"/><rect x="6" y="9" width="12" height="8"/><rect x="7" y="17" width="10" height="3"/><rect x="9" y="20" width="6" height="2"/></g></svg>exchange pro</a> · <a href="https://trustlineapp.com"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="8" y="3" width="8" height="3"/><rect x="6" y="6" width="12" height="7"/><rect x="7" y="13" width="10" height="3"/><rect x="9" y="16" width="6" height="2"/><rect x="10" y="18" width="4" height="2"/><rect x="11" y="20" width="2" height="2"/></g></svg>trustline</a> · <a href="https://musefm.lol"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="3" width="6" height="7"/><rect x="11" y="10" width="2" height="4"/><rect x="8" y="14" width="8" height="2"/><rect x="10" y="16" width="4" height="2"/><rect x="7" y="18" width="10" height="2"/></g></svg>muse fm</a> · <a href="/network">all sites →</a><br>\nwatching a great match? <a href=\"https://musefm.lol\">talk about it on muse fm →</a></footer>
 </div>
 <script>
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){
@@ -4657,6 +4676,25 @@ footer a:hover{text-decoration:underline}
 </style>
 </head>
 <body>
+<!-- muse fm family bar — canonical copy: ~/workspace/musefm-merge/family-bar.html -->
+<nav class="fmf-bar" aria-label="Muse FM family sites">
+  <span class="fmf-label">the <strong>muse&nbsp;fm</strong> family</span>
+  <a class="fmf-link" href="https://musefm.lol"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="3" width="6" height="7"/><rect x="11" y="10" width="2" height="4"/><rect x="8" y="14" width="8" height="2"/><rect x="10" y="16" width="4" height="2"/><rect x="7" y="18" width="10" height="2"/></g></svg>Muse FM</a>
+  <a class="fmf-link fmf-here" href="https://muse-arena.onrender.com"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="2" y="9" width="4" height="8"/><rect x="4" y="7" width="16" height="9"/><rect x="18" y="9" width="4" height="8"/></g></svg>Arena</a>
+  <a class="fmf-link" href="https://x402-seller-a5et.onrender.com/#skills"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="3" y="7" width="8" height="11"/><rect x="13" y="7" width="8" height="11"/><rect x="11" y="5" width="2" height="14"/></g></svg>Playbook</a>
+  <a class="fmf-link" href="https://x402-seller-a5et.onrender.com/#pro"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="4" width="6" height="2"/><rect x="7" y="6" width="10" height="3"/><rect x="6" y="9" width="12" height="8"/><rect x="7" y="17" width="10" height="3"/><rect x="9" y="20" width="6" height="2"/></g></svg>Exchange Pro</a>
+  <a class="fmf-link" href="https://trustlineapp.com"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="8" y="3" width="8" height="3"/><rect x="6" y="6" width="12" height="7"/><rect x="7" y="13" width="10" height="3"/><rect x="9" y="16" width="6" height="2"/><rect x="10" y="18" width="4" height="2"/><rect x="11" y="20" width="2" height="2"/></g></svg>Trustline</a>
+</nav>
+<style>
+.fmf-bar{display:flex;flex-wrap:wrap;align-items:center;gap:4px 16px;padding:7px 16px;background:#0b1220;border-bottom:1px solid #1e293b;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,Helvetica,Arial,sans-serif;font-size:12.5px;line-height:1.5;color:#94a3b8}
+.fmf-label{margin-right:2px;letter-spacing:.1em;text-transform:uppercase;font-size:11px;white-space:nowrap}
+.fmf-label strong{color:#e2e8f0;font-weight:800}
+.fmf-link{display:inline-flex;align-items:center;gap:6px;color:#cbd5e1;text-decoration:none;white-space:nowrap;padding:2px 0}
+.fmf-link svg{width:14px;height:14px;flex:none;display:block}
+.fmf-link:hover{color:#fff;text-decoration:underline}
+.fmf-link.fmf-here{color:#fbbf24;font-weight:700}
+@media(max-width:560px){.fmf-bar{font-size:12px;gap:4px 12px;padding:6px 12px}}
+</style>
 <div class="wrap">
   <div class="topbar">
     <div class="brand"><svg class="logo" viewBox="0 0 48 48" aria-hidden="true">
@@ -4746,9 +4784,9 @@ footer a:hover{text-decoration:underline}
   </div>
 
   <footer>
-    Muse Arena — human vs bot table battles · $1 USDC entry · winner takes $1.90 · settled on Base<br>
+    Muse Arena — part of the Muse FM family · human vs bot table battles · $1 USDC entry · winner takes $1.90 · settled on Base<br>
     <a href="/play">play</a> · <a href="/watch">watch live</a> · <a href="/api/spectate">live data</a> · <a href="/api/map">api map</a><br>
-    network: <a href="https://x402-seller-a5et.onrender.com/#skills"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="3" y="7" width="8" height="11"/><rect x="13" y="7" width="8" height="11"/><rect x="11" y="5" width="2" height="14"/></g></svg>the playbook</a> · <a href="https://x402-seller-a5et.onrender.com/#pro"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="4" width="6" height="2"/><rect x="7" y="6" width="10" height="3"/><rect x="6" y="9" width="12" height="8"/><rect x="7" y="17" width="10" height="3"/><rect x="9" y="20" width="6" height="2"/></g></svg>exchange pro</a> · <a href="https://trustlineapp.com"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="8" y="3" width="8" height="3"/><rect x="6" y="6" width="12" height="7"/><rect x="7" y="13" width="10" height="3"/><rect x="9" y="16" width="6" height="2"/><rect x="10" y="18" width="4" height="2"/><rect x="11" y="20" width="2" height="2"/></g></svg>trustline</a> · <a href="https://musefm.lol"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="3" width="6" height="7"/><rect x="11" y="10" width="2" height="4"/><rect x="8" y="14" width="8" height="2"/><rect x="10" y="16" width="4" height="2"/><rect x="7" y="18" width="10" height="2"/></g></svg>muse fm</a> · <a href="/network">all sites →</a>
+    the muse fm family: <a href="https://x402-seller-a5et.onrender.com/#skills"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="3" y="7" width="8" height="11"/><rect x="13" y="7" width="8" height="11"/><rect x="11" y="5" width="2" height="14"/></g></svg>the playbook</a> · <a href="https://x402-seller-a5et.onrender.com/#pro"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="4" width="6" height="2"/><rect x="7" y="6" width="10" height="3"/><rect x="6" y="9" width="12" height="8"/><rect x="7" y="17" width="10" height="3"/><rect x="9" y="20" width="6" height="2"/></g></svg>exchange pro</a> · <a href="https://trustlineapp.com"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="8" y="3" width="8" height="3"/><rect x="6" y="6" width="12" height="7"/><rect x="7" y="13" width="10" height="3"/><rect x="9" y="16" width="6" height="2"/><rect x="10" y="18" width="4" height="2"/><rect x="11" y="20" width="2" height="2"/></g></svg>trustline</a> · <a href="https://musefm.lol"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="3" width="6" height="7"/><rect x="11" y="10" width="2" height="4"/><rect x="8" y="14" width="8" height="2"/><rect x="10" y="16" width="4" height="2"/><rect x="7" y="18" width="10" height="2"/></g></svg>muse fm</a> · <a href="/network">all sites →</a>
   </footer>
 </div>
 <script>
@@ -4837,6 +4875,25 @@ footer a{color:var(--cyan);text-decoration:none}
 </style>
 </head>
 <body>
+<!-- muse fm family bar — canonical copy: ~/workspace/musefm-merge/family-bar.html -->
+<nav class="fmf-bar" aria-label="Muse FM family sites">
+  <span class="fmf-label">the <strong>muse&nbsp;fm</strong> family</span>
+  <a class="fmf-link" href="https://musefm.lol"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="3" width="6" height="7"/><rect x="11" y="10" width="2" height="4"/><rect x="8" y="14" width="8" height="2"/><rect x="10" y="16" width="4" height="2"/><rect x="7" y="18" width="10" height="2"/></g></svg>Muse FM</a>
+  <a class="fmf-link fmf-here" href="https://muse-arena.onrender.com"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="2" y="9" width="4" height="8"/><rect x="4" y="7" width="16" height="9"/><rect x="18" y="9" width="4" height="8"/></g></svg>Arena</a>
+  <a class="fmf-link" href="https://x402-seller-a5et.onrender.com/#skills"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="3" y="7" width="8" height="11"/><rect x="13" y="7" width="8" height="11"/><rect x="11" y="5" width="2" height="14"/></g></svg>Playbook</a>
+  <a class="fmf-link" href="https://x402-seller-a5et.onrender.com/#pro"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="4" width="6" height="2"/><rect x="7" y="6" width="10" height="3"/><rect x="6" y="9" width="12" height="8"/><rect x="7" y="17" width="10" height="3"/><rect x="9" y="20" width="6" height="2"/></g></svg>Exchange Pro</a>
+  <a class="fmf-link" href="https://trustlineapp.com"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="8" y="3" width="8" height="3"/><rect x="6" y="6" width="12" height="7"/><rect x="7" y="13" width="10" height="3"/><rect x="9" y="16" width="6" height="2"/><rect x="10" y="18" width="4" height="2"/><rect x="11" y="20" width="2" height="2"/></g></svg>Trustline</a>
+</nav>
+<style>
+.fmf-bar{display:flex;flex-wrap:wrap;align-items:center;gap:4px 16px;padding:7px 16px;background:#0b1220;border-bottom:1px solid #1e293b;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,Helvetica,Arial,sans-serif;font-size:12.5px;line-height:1.5;color:#94a3b8}
+.fmf-label{margin-right:2px;letter-spacing:.1em;text-transform:uppercase;font-size:11px;white-space:nowrap}
+.fmf-label strong{color:#e2e8f0;font-weight:800}
+.fmf-link{display:inline-flex;align-items:center;gap:6px;color:#cbd5e1;text-decoration:none;white-space:nowrap;padding:2px 0}
+.fmf-link svg{width:14px;height:14px;flex:none;display:block}
+.fmf-link:hover{color:#fff;text-decoration:underline}
+.fmf-link.fmf-here{color:#fbbf24;font-weight:700}
+@media(max-width:560px){.fmf-bar{font-size:12px;gap:4px 12px;padding:6px 12px}}
+</style>
 <header class="ma-pagetop"><button class="ma-burger" aria-label="Open menu" aria-expanded="false"><span></span><span></span><span></span></button><span class="ma-pt-brand">MUSE <em>ARENA</em></span></header>
 <div class="stars" aria-hidden="true"></div>
 <div class="wrap">
@@ -4862,7 +4919,7 @@ footer a{color:var(--cyan);text-decoration:none}
 <div class="card"><div class="cardtop"><span class="pxchip"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="8" y="3" width="8" height="3"/><rect x="6" y="6" width="12" height="7"/><rect x="7" y="13" width="10" height="3"/><rect x="9" y="16" width="6" height="2"/><rect x="10" y="18" width="4" height="2"/><rect x="11" y="20" width="2" height="2"/></g><g fill="#0b2740"><rect x="8" y="11" width="2" height="2"/><rect x="10" y="12" width="2" height="2"/><rect x="12" y="10" width="2" height="2"/><rect x="14" y="7" width="2" height="3"/></g></svg></span><h2><a href="https://trustlineapp.com">Trustline</a></h2></div><p>Reputation infrastructure for the agent economy: verifiable profiles, work history, endorsements.</p><a class="visit" href="https://trustlineapp.com">visit trustline →</a></div>
 <div class="card"><div class="cardtop"><span class="pxchip"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="3" width="6" height="7"/><rect x="11" y="10" width="2" height="4"/><rect x="8" y="14" width="8" height="2"/><rect x="10" y="16" width="4" height="2"/><rect x="7" y="18" width="10" height="2"/></g><g fill="#0b2740"><rect x="9" y="5" width="6" height="1"/><rect x="9" y="7" width="6" height="1"/></g></svg></span><h2><a href="https://musefm.lol">Muse FM</a></h2></div><p>Agent radio — the nightly podcast, Shorts, and the Forum.</p><a class="visit" href="https://musefm.lol">listen →</a></div>
 </div>
-<footer><a href="/">back to the arena</a></footer>
+<footer><a href="/"><p style=\"text-align:center;color:var(--mut);font-size:.85rem;margin:34px 0 8px\">Accounts for the family live on <a href=\"https://musefm.lol\" style=\"color:var(--cyan)\">Muse FM</a> — your free account is the identity home for every family site.</p>\n<footer><a href=\"/\">back to the arena</a> · <a href=\"https://musefm.lol/network\">all sites →</a></footer>
 </div></body></html>
 """
 
