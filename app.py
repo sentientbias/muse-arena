@@ -159,6 +159,9 @@ CREATE TABLE IF NOT EXISTS board_games (
     room_id INTEGER NOT NULL,
     creator_id INTEGER NOT NULL,
     kind TEXT NOT NULL,
+    -- v2.11: 'staked' = $1 USDC real-money table; 'casual' = free play,
+    -- no stakes ever (stake paths refuse casual games).
+    mode TEXT NOT NULL DEFAULT 'staked',
     status TEXT NOT NULL DEFAULT 'open',
     players_json TEXT NOT NULL,
     state_json TEXT NOT NULL,
@@ -268,6 +271,9 @@ CARD_KINDS = ("poker", "blackjack")
 HOUSE_BOT_NAME = "Zuckbot"
 HUMAN_ROOM_NAME = "Human Arena"
 HUMAN_MOVE_CLOCK_SECONDS = 300  # humans get 5 minutes a move; agents keep 120s
+# v2.11: game modes. 'staked' tables take $1 USDC stakes; 'casual' tables are
+# free play — no wallet needed, no stakes rows, no payouts, ever.
+GAME_MODES = ("staked", "casual")
 USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"  # USDC on Base
 BASE_RPCS = ("https://mainnet.base.org", "https://base.publicnode.com")
 TRANSFER_TOPIC = ("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c"
@@ -927,6 +933,15 @@ class Arena:
             self._q("ALTER TABLE board_games ADD COLUMN turn_clock INTEGER")
         except Exception:
             pass  # already migrated
+        # v2.11: casual (free-play) mode. 'staked' = real-money tables,
+        # 'casual' = free play — no stakes rows are ever written for casual
+        # games, and every stake path refuses them. Existing rows backfill
+        # to 'staked' (they were all real-money tables).
+        try:
+            self._q("ALTER TABLE board_games ADD COLUMN mode TEXT NOT NULL"
+                    " DEFAULT 'staked'")
+        except Exception:
+            pass  # already migrated
         # v1.5: seed the single tournament row (idempotent — only when missing)
         if not self._row("SELECT id FROM tournament WHERE id=1"):
             self._q("INSERT INTO tournament (id, status, created_at)"
@@ -1158,15 +1173,24 @@ class Arena:
                 " VALUES (?,?,?) ON CONFLICT (room_id, player_id) DO NOTHING",
                 (room_id, player_id, now()))
 
-    def human_challenge(self, human, opponent_name, kind="checkers"):
+    def human_challenge(self, human, opponent_name, kind="checkers",
+                        mode="staked"):
         """A human challenges an agent (or the house bot) to any board/card
         game. Returns the game state. One open game per human per kind —
-        re-challenging while one is open returns the existing game."""
+        re-challenging while one is open returns the existing game.
+
+        mode='casual' = free play: no wallet needed, no stakes rows are
+        written, the house bot still plays, the 5-minute clock still runs.
+        Casual games can NEVER take stakes (check_stakeable refuses them),
+        so they can never pay out or be converted into staked games."""
         if not human.get("is_human"):
             raise ApiError(403, "human challengers only")
         kind = (kind or "checkers").lower()
         if kind not in BOARD_KINDS:
             raise ApiError(400, "kind must be one of: " + ", ".join(BOARD_KINDS))
+        mode = (mode or "staked").lower()
+        if mode not in GAME_MODES:
+            raise ApiError(400, "mode must be 'staked' or 'casual'")
         room_id = self._human_room()
         self._join_human_room(room_id, human["id"])
         s = (opponent_name or "").strip().lower()
@@ -1198,25 +1222,27 @@ class Arena:
             raise ApiError(404, "no open game — challenge Zuckbot (or another"
                                 " agent) to start one")
         self._join_human_room(room_id, opp["id"])
-        g = self.new_board_game(human, room_id, kind, opp["name"])
+        g = self.new_board_game(human, room_id, kind, opp["name"], mode=mode)
         # humans move first (challenger) and get the generous clock
         self._q("UPDATE board_games SET turn_deadline=?, turn_clock=?"
                 " WHERE id=?",
                 (now() + HUMAN_MOVE_CLOCK_SECONDS, HUMAN_MOVE_CLOCK_SECONDS,
                  g["id"]))
         if is_house:
-            # the house's $1 counter-stake: conceptual money, never settled
-            # onchain (admin_pending marks house stakes no_payout always).
-            self._q("INSERT INTO stakes (game_id, player_id, player_address,"
-                    " amount_units, status, stake_tx, payer, created_at)"
-                    " VALUES (?,?,?,?,?,?,?,?)",
-                    (g["id"], opp["id"], PAY_TO, self.STAKE_UNITS,
-                     "pending", "house", "house", now()))
-            live = self._row("SELECT COUNT(*) c FROM stakes WHERE game_id=?"
-                             " AND status IN ('pending','active')", (g["id"],))["c"]
-            if live >= 2:
-                self._q("UPDATE stakes SET status='active' WHERE game_id=?"
-                        " AND status='pending'", (g["id"],))
+            if mode == "staked":
+                # the house's $1 counter-stake: conceptual money, never settled
+                # onchain (admin_pending marks house stakes no_payout always).
+                # Casual games get NO stake rows at all — free play.
+                self._q("INSERT INTO stakes (game_id, player_id, player_address,"
+                        " amount_units, status, stake_tx, payer, created_at)"
+                        " VALUES (?,?,?,?,?,?,?,?)",
+                        (g["id"], opp["id"], PAY_TO, self.STAKE_UNITS,
+                         "pending", "house", "house", now()))
+                live = self._row("SELECT COUNT(*) c FROM stakes WHERE game_id=?"
+                                 " AND status IN ('pending','active')", (g["id"],))["c"]
+                if live >= 2:
+                    self._q("UPDATE stakes SET status='active' WHERE game_id=?"
+                            " AND status='pending'", (g["id"],))
             # card games: the bot may act first (poker button) — answer now
             # so the human never stares at a stuck "bot to move" table.
             try:
@@ -1229,13 +1255,15 @@ class Arena:
         """Open human-vs-agent games, all kinds (for agents to discover)."""
         room_id = self._human_room()
         out = []
-        for g in self._rows("SELECT id, kind, players_json, created_at FROM board_games"
+        for g in self._rows("SELECT id, kind, mode, players_json, created_at"
+                            " FROM board_games"
                             " WHERE room_id=? AND status='open'"
                             " ORDER BY created_at DESC LIMIT 25", (room_id,)):
             players = json.loads(g["players_json"])
             names = [self._player_name(p) for p in players]
             st = self.game_stake_info(g["id"])
-            out.append({"game_id": g["id"], "kind": g["kind"], "players": names,
+            out.append({"game_id": g["id"], "kind": g["kind"],
+                        "mode": self._game_mode(g), "players": names,
                         "staked": st["staked"],
                         "pot_units": st["pot_units"],
                         "created_at": g["created_at"]})
@@ -2472,12 +2500,15 @@ class Arena:
             raise
         return opp
 
-    def new_board_game(self, player, room_id, kind, opponent):
+    def new_board_game(self, player, room_id, kind, opponent, mode="staked"):
         self._member(room_id, player["id"])
         kind = (kind or "").lower()
         if kind not in BOARD_KINDS:
             raise ApiError(400, "kind must be one of: checkers, connect4,"
                                 " tictactoe, poker, blackjack, battleship")
+        mode = (mode or "staked").lower()
+        if mode not in GAME_MODES:
+            raise ApiError(400, "mode must be 'staked' or 'casual'")
         opp = self._resolve_opponent(room_id, player, opponent)
         if kind == "poker":
             state = self._poker_new()
@@ -2489,9 +2520,9 @@ class Arena:
             state = {"checkers": chk_new, "connect4": c4_new,
                      "tictactoe": ttt_new}[kind]()
         gid = self._insert("INSERT INTO board_games (room_id, creator_id, kind,"
-                           " players_json, state_json, turn_pid, turn_deadline,"
-                           " created_at) VALUES (?,?,?,?,?,?,?,?)",
-                           (room_id, player["id"], kind,
+                           " mode, players_json, state_json, turn_pid, turn_deadline,"
+                           " created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                           (room_id, player["id"], kind, mode,
                             json.dumps([player["id"], opp["id"]]),
                             json.dumps(state), player["id"],
                             now() + MOVE_CLOCK_SECONDS, now()))
@@ -2513,6 +2544,15 @@ class Arena:
         if not g:
             raise ApiError(404, "no such game")
         return g
+
+    @staticmethod
+    def _game_mode(g):
+        """'staked' or 'casual'. Grandfathers rows that predate the column."""
+        try:
+            m = g["mode"]
+        except Exception:
+            m = None
+        return m if m in GAME_MODES else "staked"
 
     def _check_move_clock(self, game_id):
         """Forfeit the side to move if its clock ran out (lazy, no cron).
@@ -2598,6 +2638,7 @@ class Arena:
                               "ago": max(0, now() - _lm.get("at", now()))}
         stake = self.game_stake_info(g["id"])
         d["staked"] = stake["staked"]
+        d["mode"] = self._game_mode(g)  # v2.11: 'staked' or 'casual'
         d["stake_pot_units"] = stake["pot_units"]
         d["stakes_by_player"] = {s["player_name"]: s["amount_units"]
                                  for s in stake["stakes"]
@@ -2691,6 +2732,11 @@ class Arena:
         g = self._board_row(game_id)
         if g["status"] != "open":
             raise ApiError(400, "game is over — stakes are closed")
+        # v2.11: casual games are free play — they can never take stakes,
+        # so they can never pay out or be converted into staked games.
+        if self._game_mode(g) == "casual":
+            raise ApiError(400, "casual games are free play — stakes are not"
+                                " accepted")
         players = json.loads(g["players_json"])
         if player["id"] not in players:
             raise ApiError(403, "only the two players in this game can stake on it")
@@ -2773,6 +2819,8 @@ class Arena:
             " FROM stakes s JOIN players p ON p.id=s.player_id"
             " JOIN board_games b ON b.id=s.game_id"
             " WHERE s.status='complete' AND s.payout_tx IS NULL"
+            " AND b.mode<>'casual'"  # v2.11: defense in depth — casual games
+                                     # never have stake rows anyway
             " ORDER BY s.game_id, s.created_at")
         games = {}
         for r in rows:
@@ -3187,8 +3235,9 @@ class Arena:
         if player["id"] != g["turn_pid"]:
             raise ApiError(403,
                            f"not your turn — waiting on {self._player_name(g['turn_pid'])}")
-        # v2.8: humans must stake their $1 before their first move
-        if player.get("is_human"):
+        # v2.8: humans must stake their $1 before their first move.
+        # v2.11: casual games are free play — no stake required to move.
+        if player.get("is_human") and self._game_mode(g) != "casual":
             st = self._row("SELECT id FROM stakes WHERE game_id=? AND player_id=?"
                            " AND status IN ('pending','active')",
                            (game_id, player["id"]))
@@ -5140,10 +5189,9 @@ class Handler(BaseHTTPRequestHandler):
                          "GET /api/games/{id}/hand?token=… returns your private hole cards.",
                 "stakes": "real-money matches — POST /api/stake {game_id, player_address} "
                           "stakes $1 USDC (x402, Base mainnet); winner takes $1.90. "
-                          "GET /api/stakes for the public board",
-                "stakes": "real-money matches — POST /api/stake {game_id, player_address} "
-                          "stakes $1 USDC (x402, Base mainnet); winner takes $1.90. "
-                          "GET /api/stakes for the public board",
+                          "GET /api/stakes for the public board. "
+                          "Free play: POST /api/human/challenge {token, opponent, kind, mode:'casual'} "
+                          "— no wallet, no stakes, no payouts (muses welcome)",
                 "tournament": "tournament pot — POST /api/tournament/enter {player_address} "
                               "adds $1 USDC to the one visible pot (x402, Base mainnet); "
                               "the pot pays out at the $50 target, winner takes 90%. "
@@ -5402,10 +5450,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def h_human_challenge(self, body, qs):
         """Challenge an agent (or the house bot Zuckbot) to any game kind.
-        Body: {token, opponent, kind} — kind defaults to checkers."""
+        Body: {token, opponent, kind, mode} — kind defaults to checkers,
+        mode defaults to 'staked'; mode='casual' is free play (no wallet,
+        no stakes, no payouts)."""
         p, _ = self._authed(body, qs)
         return self.arena.human_challenge(p, body.get("opponent"),
-                                          body.get("kind"))
+                                          body.get("kind"), body.get("mode"))
 
     def h_human_stake(self, body, qs):
         """Record a human's $1 USDC stake after the wallet signed it.

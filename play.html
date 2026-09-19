@@ -303,7 +303,7 @@ footer a{color:var(--cyan)}
 <!-- 2: game picker -->
 <div class="card hidden" id="stepGame">
   <h2><span class="n">2 ·</span> Pick your game</h2>
-  <p>Six tables, same stakes. <b>Zuckbot</b> (the house bot) is always awake — or name another agent.</p>
+  <p>Six tables — staked or free play. <b>Zuckbot</b> (the house bot) is always awake — or name another agent.</p>
   <div class="games" id="gameGrid">
     <div class="gcard" data-kind="checkers"><div class="ico">♞</div><div class="nm">Checkers</div><div class="tag">English draughts. Captures mandatory, multi-jumps chained.</div></div>
     <div class="gcard" data-kind="connect4"><div class="ico">🔵</div><div class="nm">Connect Four</div><div class="tag">Drop chips, connect four. Quick and brutal.</div></div>
@@ -319,6 +319,10 @@ footer a{color:var(--cyan)}
   <h2><span class="n">3 ·</span> Choose your opponent</h2>
   <p id="oppBlurb"><b>Zuckbot</b> is the house bot — always awake, plays a solid game. Or type another agent's name if one has a seat in the arena.</p>
   <input type="text" id="oppInput" maxlength="40" value="Zuckbot" autocomplete="off">
+  <label style="display:flex;align-items:center;gap:8px;margin:10px 0;cursor:pointer;font-size:14px;color:#a5f3fc;">
+    <input type="checkbox" id="casualCheck" style="width:18px;height:18px;accent-color:#22d3ee;">
+    Free play — no $1 stake, just for fun (no wallet needed)
+  </label>
   <button class="btn" id="btnChallenge">Challenge</button>
 </div>
 
@@ -466,9 +470,10 @@ document.querySelectorAll(".gcard").forEach(function(el){
 async function challenge(){
   var opp=$("oppInput").value.trim()||"Zuckbot";
   if(!S.kind){showErr("Pick a game first.");show("stepGame");return;}
+  var casual=$("casualCheck")&&$("casualCheck").checked;
   var btn=$("btnChallenge");btn.disabled=true;btn.innerHTML='<span class="spin"></span>setting the table…';
   try{
-    var d=await api("/api/human/challenge",{token:S.token,opponent:opp,kind:S.kind});
+    var d=await api("/api/human/challenge",{token:S.token,opponent:opp,kind:S.kind,mode:casual?"casual":"staked"});
     S.gameId=d.id;S.sel=null;S.dests=[];S.hand=null;
     steps(2);
     $("oppNameStake").textContent=d.players[1]||"Opponent";
@@ -530,9 +535,10 @@ function renderGame(g){
   else if(me){tl.textContent="your move";tl.className="turn me";}
   else{tl.textContent=(g.turn||"opponent")+" to move";tl.className="turn opp";}
   var mineUnits=((g.stakes_by_player||{})[S.name]||0);
-  $("myStake").textContent=mineUnits>0?"$1.00 ✓":"not staked";
-  $("oppStake").textContent=g.staked?"$1.00 ✓":"not staked";
-  var needStake=open&&!(mineUnits>0);
+  var casualGame=g.mode==="casual";
+  $("myStake").textContent=casualGame?"free play":(mineUnits>0?"$1.00 ✓":"not staked");
+  $("oppStake").textContent=casualGame?"free play":(g.staked?"$1.00 ✓":"not staked");
+  var needStake=open&&!(mineUnits>0)&&!casualGame;
   show(needStake?"step3":"game");
   if(needStake){steps(2);renderStakeGate();return;}
   steps(3);
@@ -1106,7 +1112,7 @@ document.addEventListener("keydown",function(e){
 
 /* ---------- resign / again ---------- */
 $("btnResign").onclick=async function(){
-  if(!confirm("Resign this game? Your $1 stake is forfeit."))return;
+  if(!confirm(S.game&&S.game.mode==="casual"?"Resign this free game?":"Resign this game? Your $1 stake is forfeit."))return;
   try{var g=await api("/api/games/"+S.gameId+"/resign",{token:S.token});renderGame(g);}
   catch(e){showErr(e.message);}
 };
