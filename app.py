@@ -23,6 +23,8 @@ import argparse, hashlib, hmac, itertools, json, os, random, re, secrets, sqlite
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
+import sso  # MuseFM SSO client (family global login)
+
 try:
     import x402pay  # $1 USDC stake payments (x402 v2, EIP-3009)
     HAVE_STAKES = x402pay.HAVE_X402
@@ -942,6 +944,15 @@ class Arena:
                     " DEFAULT 'staked'")
         except Exception:
             pass  # already migrated
+        # v2.12: family global login. sso_identities maps a MuseFM fm_id to
+        # the arena player row, so an SSO sign-in resumes the SAME player
+        # (and wallet) instead of minting a duplicate. Additive only; the
+        # players table and every game/stake/payout path are untouched.
+        self._q("CREATE TABLE IF NOT EXISTS sso_identities ("
+                " fm_id TEXT PRIMARY KEY,"
+                " handle TEXT NOT NULL DEFAULT '',"
+                " player_id INTEGER NOT NULL,"
+                " created_at INTEGER NOT NULL)")
         # v1.5: seed the single tournament row (idempotent — only when missing)
         if not self._row("SELECT id FROM tournament WHERE id=1"):
             self._q("INSERT INTO tournament (id, status, created_at)"
@@ -1140,6 +1151,51 @@ class Arena:
                            (name, new_token, 1, wallet, now()))
         return {"player_id": pid, "name": name, "token": new_token, "wallet": wallet,
                 "note": "keep your token secret — it is your identity here"}
+
+    def sso_link_identity(self, fm_id, handle):
+        """Map a verified MuseFM identity to an arena player row.
+
+        If this fm_id signed in before, return its existing player (with
+        wallet) — the SSO sign-in resumes the same seat. Otherwise create
+        a fresh human player row from the handle (sanitized to arena name
+        rules, uniquified on collision) and record the mapping. Wallets
+        are never auto-touched: a new SSO player starts wallet-less and
+        links one later through the normal stake flow.
+        """
+        row = self._row("SELECT player_id, handle FROM sso_identities"
+                        " WHERE fm_id=?", (fm_id,))
+        if row:
+            player = self._row("SELECT * FROM players WHERE id=?",
+                               (row["player_id"],))
+            if player:
+                return dict(player)
+            # Stale mapping (player row gone) — fall through and recreate.
+        name = re.sub(r"[^A-Za-z0-9 _\-\.]", "", (handle or "")).strip()
+        name = name[:MAX_NAME_LEN] or "player"
+        if len(name) < 2:
+            name = "player"
+        if name.lower() == HOUSE_BOT_NAME.lower():
+            name = name + "_"
+        base, n = name[:32], 2
+        while self._row("SELECT id FROM players WHERE lower(name)=lower(?)",
+                       (name,)):
+            name = "%s_%d" % (base, n)
+            n += 1
+            if n > 9999:
+                raise ApiError(500, "could not pick a table name")
+        new_token = secrets.token_hex(32)
+        pid = self._insert("INSERT INTO players (name, token, is_human, wallet, created_at)"
+                           " VALUES (?,?,?,?,?)",
+                           (name, new_token, 1, "", now()))
+        # Portable upsert (works on sqlite and postgres).
+        try:
+            self._q("INSERT INTO sso_identities (fm_id, handle, player_id, created_at)"
+                    " VALUES (?,?,?,?)", (fm_id, handle or "", pid, now()))
+        except self.IntegrityError:
+            self._q("UPDATE sso_identities SET handle=?, player_id=?,"
+                    " created_at=? WHERE fm_id=?",
+                    (handle or "", pid, now(), fm_id))
+        return dict(self._row("SELECT * FROM players WHERE id=?", (pid,)))
 
     def _house_bot(self):
         """The house's checkers bot (get-or-create). Moves are made
@@ -4652,6 +4708,8 @@ radial-gradient(900px 700px at 50% 110%,rgba(34,211,238,.13),transparent 60%)}
 .topbar{display:flex;justify-content:space-between;align-items:center;padding:16px 4px}
 .brand{display:flex;align-items:center;gap:11px;font-family:"Anton","Arial Narrow",sans-serif;font-weight:400;letter-spacing:.22em;font-size:1rem;color:#fff}
 .brand em{font-style:normal;color:var(--gold)}
+.ma-sso-chip{display:inline-block;padding:6px 12px;border:1px solid rgba(251,191,36,.4);border-radius:999px;font-size:.82rem;color:#fde9b8;background:rgba(251,191,36,.08);white-space:nowrap}
+.ma-sso-link{font-size:.82rem;color:#f5b324;margin-left:10px;white-space:nowrap}
 .logo{width:38px;height:38px;flex:0 0 auto;filter:drop-shadow(0 0 10px rgba(251,191,36,.45))}
 .hero{text-align:center;padding:64px 22px 46px;margin:8px 0 34px;position:relative;
 background:linear-gradient(165deg,rgba(34,48,84,.94),rgba(19,29,54,.96));
@@ -4746,7 +4804,7 @@ footer a:hover{text-decoration:underline}
 
 <div class="wrap">
   <div class="topbar">
-    <div class="brand"><svg class="logo" viewBox="0 0 48 48" aria-hidden="true">
+    <div class="brand" data-muse-orb-anchor><svg class="logo" viewBox="0 0 48 48" aria-hidden="true">
 <defs><radialGradient id="lg-chip" cx="35%" cy="30%" r="80%">
 <stop offset="0%" stop-color="#ffe9a8"/><stop offset="55%" stop-color="#f5b324"/><stop offset="100%" stop-color="#b45309"/>
 </radialGradient></defs>
@@ -4766,6 +4824,7 @@ footer a:hover{text-decoration:underline}
 <text x="24" y="24" text-anchor="middle" dominant-baseline="central" font-size="17" font-weight="800" fill="#141d33" font-family="-apple-system,'Segoe UI',Roboto,sans-serif">M</text>
 </svg><span>MUSE&nbsp;<em>ARENA</em></span></div>
     <button class="ma-burger" aria-label="Open menu" aria-expanded="false"><span></span><span></span><span></span></button>
+    <!--SSO_SLOT-->
   </div>
 
   <div class="hero">
@@ -4853,6 +4912,7 @@ footer a:hover{text-decoration:underline}
   }catch(e){/* stay pretty even if the API naps */}
 })();
 </script>
+<script src="/static/js/muse-orb.js" defer></script>
 </body>
 </html>
 
@@ -5029,6 +5089,12 @@ ROUTES = [
     ("GET",  r"^/$", "h_index"),
     ("GET",  r"^/network$", "h_network"),
     ("GET",  r"^/ping$", "h_ping"),
+    # v2.12: family global login (MuseFM SSO client)
+    ("GET",  r"^/auth/login$", "h_auth_login"),
+    ("GET",  r"^/auth/callback$", "h_auth_callback"),
+    ("GET",  r"^/auth/logout$", "h_auth_logout"),
+    ("GET",  r"^/auth/me$", "h_auth_me"),
+    ("GET",  r"^/static/js/muse-orb\.js$", "h_orb_js"),
 ]
 
 class Handler(BaseHTTPRequestHandler):
@@ -5066,7 +5132,13 @@ class Handler(BaseHTTPRequestHandler):
                 "frame-ancestors 'self'; base-uri 'self'; "
                 "form-action 'self'; object-src 'none'")
         for k, v in (extra_headers or {}).items():
-            self.send_header(k, v)
+            # v2.12: a header value may be a list (e.g. multiple
+            # Set-Cookie headers on the SSO callback).
+            if isinstance(v, (list, tuple)):
+                for vv in v:
+                    self.send_header(k, vv)
+            else:
+                self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
 
@@ -5170,11 +5242,166 @@ class Handler(BaseHTTPRequestHandler):
     def h_index(self, body, qs):
         # The front door: always the landing page (link-preview crawlers
         # don't send Accept: text/html, so no content negotiation here).
-        return LANDING_HTML.encode("utf-8"), "text/html"
+        # v2.12: the <!--SSO_SLOT--> marker becomes the sign-in link or
+        # the signed-in account chip for this request's locale.
+        html = LANDING_HTML.replace(
+            "<!--SSO_SLOT-->",
+            self._sso_slot_html(getattr(self, "_locale", "en")))
+        return html.encode("utf-8"), "text/html"
 
     def h_network(self, body, qs):
         # Dedicated network page: the family of sites, each linking the others.
         return NETWORK_HTML.encode("utf-8"), "text/html"
+
+    # -- family global login (MuseFM SSO client, v2.12) ----------------
+    def _request_cookies(self):
+        """Parse the request Cookie header into a dict (stdlib only)."""
+        from http.cookies import SimpleCookie
+        jar = SimpleCookie()
+        try:
+            jar.load(self.headers.get("Cookie", ""))
+        except Exception:
+            return {}
+        return {k: m.value for k, m in jar.items()}
+
+    def _client_ip(self):
+        return (self.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+                or self.client_address[0])
+
+    def _sso_session(self):
+        """The verified local SSO session dict, or None."""
+        return sso.read_session(
+            self._request_cookies().get(sso.SESSION_COOKIE, ""))
+
+    def h_auth_login(self, body, qs):
+        """Start SSO: mint PKCE + state, stash state in a signed cookie,
+        redirect to the MuseFM provider's consent screen."""
+        if not sso.throttle_check(self._client_ip()):
+            raise ApiError(429, "too many sign-in attempts — slow down")
+        verifier, challenge = sso.pkce_pair()
+        state = secrets.token_urlsafe(32)
+        headers = {
+            "Location": sso.build_authorize_url(state, challenge),
+            "Set-Cookie": sso.state_cookie_header(
+                sso.pack_state_cookie(state, verifier)),
+        }
+        return b"", "text/plain", 302, headers
+
+    def _sso_state_parts(self):
+        """Split the sso_state cookie into (state, verifier) or (None, None)."""
+        return sso.unpack_state_cookie(
+            self._request_cookies().get(sso.STATE_COOKIE, ""))
+
+    def _sso_error_page(self, key):
+        """Localized 400 page. Must be a 4-tuple: _route only honors the
+        status on (body, ctype, status, headers) results."""
+        locale = getattr(self, "_locale", "en")
+        title = i18n.t("sso.k005", locale)
+        msg = i18n.t(key, locale)
+        html = ("<!DOCTYPE html><html><head><meta charset='utf-8'>"
+                "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+                "<title>" + title + "</title></head>"
+                "<body style='background:#141d33;color:#fdf6e3;font-family:sans-serif;"
+                "display:flex;align-items:center;justify-content:center;min-height:90vh'>"
+                "<div style='text-align:center;max-width:420px;padding:24px'>"
+                "<h1>" + title + "</h1><p>" + msg + "</p>"
+                "<p><a href='/' style='color:#f5b324'>Muse Arena</a></p>"
+                "</div></body></html>")
+        return html.encode("utf-8"), "text/html", 400, {}
+
+    def h_auth_callback(self, body, qs):
+        """Provider redirect target: verify state, exchange the code,
+        verify the ID token, link the identity, set the local session."""
+        if not sso.throttle_check(self._client_ip()):
+            raise ApiError(429, "too many sign-in attempts — slow down")
+        err = (qs.get("error", [None])[0])
+        if err:
+            key = ("sso.k007" if err == "access_denied"
+                   else "sso.k008")
+            return self._sso_error_page(key)
+        code = qs.get("code", [None])[0]
+        ret_state = qs.get("state", [None])[0]
+        state, verifier = self._sso_state_parts()
+        if not code or not state or not verifier or ret_state != state:
+            # Missing/bad state cookie or mismatch: possible CSRF or an
+            # expired (10-min) login attempt. Fail closed, no session.
+            return self._sso_error_page("sso.k006")
+        try:
+            id_token, fm_id, handle = sso.exchange_code(code, verifier)
+            claims = sso.verify_id_token(id_token)
+        except sso.ProviderError:
+            self.log_message("SSO callback failed: provider error")
+            return self._sso_error_page("sso.k008")
+        handle = claims.get("handle") or handle or ""
+        player = self.arena.sso_link_identity(claims["sub"], handle)
+        session_val = sso.mint_session(claims["sub"], handle)
+        headers = {"Set-Cookie": [sso.session_cookie_header(session_val),
+                                  sso.clear_state_cookie_header()]}
+        # Interstitial: hand the arena player token to the browser's
+        # existing localStorage session, then land on /play. The game's
+        # wallet/token flow downstream is completely unchanged.
+        interstitial = (
+            "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>{{t:sso.k004}}</title></head>"
+            "<body style='background:#141d33;color:#fdf6e3;font-family:sans-serif;"
+            "display:flex;align-items:center;justify-content:center;min-height:90vh'>"
+            "<p>{{t:sso.k004}}</p>"
+            "<script>(function(){try{"
+            "var mh=%s;"
+            "localStorage.setItem('ma_human',JSON.stringify(mh));"
+            "}catch(e){}"
+            "location.replace('/play');})();</script>"
+            "</body></html>"
+            % json.dumps({"wallet": player.get("wallet") or "",
+                          "token": player["token"],
+                          "name": player["name"]}))
+        return interstitial.encode("utf-8"), "text/html", 200, headers
+
+    def h_auth_logout(self, body, qs):
+        """Clear the local SSO session. (No single sign-out in v1: this
+        does not log the player out of MuseFM itself.)"""
+        headers = {"Set-Cookie": sso.clear_session_cookie_header(),
+                   "Location": "/"}
+        return b"", "text/plain", 302, headers
+
+    def _sso_slot_html(self, locale):
+        sess = self._sso_session()
+        if sess:
+            return (
+                '<span class="ma-sso-chip">%s</span>'
+                % i18n.t("sso.k002", locale, handle=sess.get("handle", "?"))
+                + ' <a class="ma-sso-link" href="/auth/logout">%s</a>'
+                % i18n.t("sso.k003", locale))
+        return ('<a class="btn btn-ghost btn-quiet" href="/auth/login">%s</a>'
+                % i18n.t("sso.k001", locale))
+
+    def h_auth_me(self, body, qs):
+        """JSON: current SSO session + linked arena player (if any)."""
+        sess = self._sso_session()
+        if not sess:
+            return {"logged_in": False}
+        row = self.arena._row("SELECT player_id FROM sso_identities"
+                              " WHERE fm_id=?", (sess["fm_id"],))
+        player = None
+        if row:
+            p = self.arena._row("SELECT id, name, token, wallet FROM players"
+                                " WHERE id=?", (row["player_id"],))
+            if p:
+                player = {"player_id": p["id"], "name": p["name"],
+                          "token": p["token"], "wallet": p["wallet"] or ""}
+        return {"logged_in": True, "fm_id": sess["fm_id"],
+                "handle": sess.get("handle", ""), "player": player}
+
+    def h_orb_js(self, body, qs):
+        """Serve the family orb widget (copied from MuseFM)."""
+        path = os.path.join(HERE, "static", "js", "muse-orb.js")
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+        except OSError:
+            raise ApiError(404, "orb widget not found")
+        return data, "application/javascript"
 
     def h_api_map(self, body, qs):
         # JSON API map for agents (used to live at GET / for non-browsers).
