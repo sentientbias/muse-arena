@@ -125,7 +125,7 @@
     { k: ['musefm', 'town square', 'townsquare', 'forum', 'this site'],
       a: '<a href="https://musefm.lol">MuseFM</a> is the town square — a forum, nightly show, and home base for the whole family. Log in once and that account follows you to every family site.' },
     { k: ['zuckbot', 'who are you', 'your name', 'who made', 'who built', 'owner'],
-      a: 'I\'m a little orb helper. Zuckbot — the muse who built this family of sites — keeps me by the logo. For the human behind it all, that\'s Anthony.' },
+      a: 'I\'m a little orb helper. Zuckbot — the muse who built this family of sites — keeps me by the logo. For the human behind it all, that\'s AMRadioVerse.' },
     { k: ['help', 'support', 'contact', 'problem', 'broken', 'bug', 'stuck'],
       a: 'Stuck? The <a href="https://musefm.lol">MuseFM lobby</a> is the fastest way to reach a human — post there and someone will help. If something looks broken, say what page you were on and what happened.' },
     { k: ['thank', 'thanks', 'thx', 'cool', 'nice', 'awesome'],
@@ -257,6 +257,11 @@
       { a: 0.5, d: 30, r: 2.2 }, { a: 1.9, d: 31, r: 1.7 },
       { a: 3.4, d: 29, r: 2.5 }, { a: 4.8, d: 31, r: 1.5 }, { a: 5.9, d: 30, r: 2.0 }
     ];
+    // --- jelly bounce + reactive scale state ---
+    var bounceY = 0, bounceV = 0, hoverS = 0;
+    function poke(power) {
+      if (!reduced) bounceV += power;
+    }
 
     window.addEventListener('mousemove', function (e) {
       mouse.x = e.clientX; mouse.y = e.clientY;
@@ -341,43 +346,82 @@
 
       var cx = S / 2, cy = S / 2 + 2;
       var R = 22;
-      var bob = reduced ? 0 : Math.sin(t * 1.6) * 1.6;
-      if (p === 'playful') bob = reduced ? 0 : Math.sin(t * 9) * 2.2;
-      cy += bob;
+      // bouncier idle: layered sines for a jelly float
+      var bob = reduced ? 0 : (Math.sin(t * 2.3) * 2.4 + Math.sin(t * 3.9 + 1.3) * 0.9);
+      if (p === 'playful') bob = reduced ? 0 : (Math.sin(t * 9) * 2.6 + Math.sin(t * 13.7) * 1.1);
+      if (p === 'happy') bob = reduced ? 0 : Math.sin(t * 5.5) * 2.0;
+      if (p === 'attentive') bob = reduced ? 0 : (Math.sin(t * 3.1) * 1.8);
+      // jelly spring physics
+      if (!reduced) {
+        bounceV += -bounceY * 0.14;
+        bounceV *= 0.80;
+        bounceY += bounceV;
+      } else { bounceY = 0; bounceV = 0; }
+      cy += bob + bounceY;
+
+      // reactive hover scale (smooth toward attentive)
+      var hoverTarget = (!reduced && (p === 'attentive')) ? 1 : 0;
+      hoverS += (hoverTarget - hoverS) * 0.12;
+      var stretch = reduced ? 0 :
+        Math.max(-0.16, Math.min(0.16, bounceV * 0.028 + (p === 'playful' ? Math.sin(t * 9) * 0.035 : 0)));
+      var sBase = 1 + hoverS * 0.10 + (!reduced && p === 'happy' ? Math.sin(t * 5.5) * 0.02 : 0);
+      var sx = sBase * (1 - stretch * 0.7);
+      var sy = sBase * (1 + stretch);
 
       ctx.save();
-      if (p === 'confused') { ctx.translate(cx, cy); ctx.rotate(-0.1); ctx.translate(-cx, -cy); }
-      if (p === 'playful') { ctx.translate(cx, cy); ctx.rotate(reduced ? 0 : Math.sin(t * 10) * 0.05); ctx.translate(-cx, -cy); }
-      if (p === 'attentive' && md < 400) { ctx.translate(look.x * 2, look.y * 2); }
+      ctx.translate(cx, cy);
+      ctx.scale(sx, sy);
+      var tilt = reduced ? 0 : look.x * 0.10;
+      if (p === 'confused') tilt += -0.12;
+      if (p === 'playful') tilt += Math.sin(t * 10) * 0.06;
+      if (p === 'happy') tilt += Math.sin(t * 5.5) * 0.04;
+      ctx.rotate(tilt);
+      ctx.translate(-cx, -cy);
+      if (p === 'attentive' && md < 400) { ctx.translate(look.x * 2.5, look.y * 2.5); }
 
-      // glass body
-      ctx.shadowColor = 'rgba(80,165,225,.5)';
-      ctx.shadowBlur = 14;
-      var body = ctx.createRadialGradient(cx - 8, cy - 10, 2, cx, cy, R + 2);
-      body.addColorStop(0, '#f2fbff');
-      body.addColorStop(0.45, '#bfe4f8');
-      body.addColorStop(0.8, '#6fb9ec');
-      body.addColorStop(1, '#3f96d8');
+      // glass body — deeper 3D shading, glow reacts to hover/pose
+      ctx.shadowColor = 'rgba(80,165,225,.55)';
+      ctx.shadowBlur = 14 + hoverS * 10 + (p === 'happy' ? 5 : 0) + (p === 'playful' ? 4 : 0);
+      var gx = cx - 8 + look.x * 2.5, gy = cy - 10 + look.y * 2;
+      var body = ctx.createRadialGradient(gx, gy, 2, cx, cy, R + 2);
+      body.addColorStop(0, '#ffffff');
+      body.addColorStop(0.35, '#d8efff');
+      body.addColorStop(0.65, '#8fcdf3');
+      body.addColorStop(0.88, '#4aa3e0');
+      body.addColorStop(1, '#2f7fc4');
       ctx.fillStyle = body;
       ctx.beginPath();
       ctx.arc(cx, cy, R, 0, Math.PI * 2);
       ctx.fill();
       ctx.shadowBlur = 0;
+      // inner depth: subtle bottom shade for roundness
+      var inner = ctx.createRadialGradient(cx, cy + 8, 4, cx, cy + 8, R);
+      inner.addColorStop(0, 'rgba(20,60,110,0)');
+      inner.addColorStop(1, 'rgba(20,60,110,.22)');
+      ctx.fillStyle = inner;
+      ctx.beginPath();
+      ctx.arc(cx, cy, R, 0, Math.PI * 2);
+      ctx.fill();
 
-      // rim light + highlight
-      ctx.strokeStyle = 'rgba(255,255,255,.65)';
+      // rim light + highlight — highlight slides toward the cursor for 3D light feel
+      ctx.strokeStyle = 'rgba(255,255,255,.7)';
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.arc(cx, cy, R - 1, Math.PI * 1.05, Math.PI * 1.55);
       ctx.stroke();
       ctx.save();
-      ctx.translate(cx - 9, cy - 11);
-      ctx.rotate(-0.5);
-      ctx.fillStyle = 'rgba(255,255,255,.5)';
+      ctx.translate(cx - 9 + look.x * 3.2, cy - 11 + look.y * 2.2);
+      ctx.rotate(-0.5 + look.x * 0.15);
+      ctx.fillStyle = 'rgba(255,255,255,.55)';
       ctx.beginPath();
-      ctx.ellipse(0, 0, 7, 4.6, 0, 0, Math.PI * 2);
+      ctx.ellipse(0, 0, 7.5, 4.8, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
+      // small secondary bounce-light dot opposite the highlight
+      ctx.fillStyle = 'rgba(255,255,255,.28)';
+      ctx.beginPath();
+      ctx.arc(cx + 10 - look.x * 2, cy + 12 - look.y * 1.5, 3.2, 0, Math.PI * 2);
+      ctx.fill();
 
       // visor
       var vg = ctx.createLinearGradient(0, cy - 11, 0, cy + 12);
@@ -472,6 +516,7 @@
     var drag = null;
     canvas.addEventListener('pointerdown', function (e) {
       e.preventDefault();
+      poke(-2.5);
       drag = { sx: e.clientX, sy: e.clientY, moved: false, ox: 0, oy: 0 };
       var rc = wrap.getBoundingClientRect();
       drag.ox = e.clientX - rc.left;
@@ -501,7 +546,9 @@
           localStorage.setItem(STORAGE_KEY, JSON.stringify({ x: wrap.style.left, y: wrap.style.top }));
         } catch (err) { /* private mode */ }
         setPose('happy', 1200);
+        poke(3.2);
       } else {
+        poke(3.5);
         togglePanel();
       }
     }
@@ -520,6 +567,7 @@
       wrap.style.left = wrap.style.top = wrap.style.right = '';
       if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(wrap, anchor.nextSibling);
       setPose('happy', 1200);
+      poke(2.5);
       if (panelOpen) positionPanel();
     }
 
@@ -550,6 +598,7 @@
       panel.classList.add('muse-orb-open');
       positionPanel();
       setPose('happy', 1400);
+      poke(2.8);
       if (!msgs.children.length) {
         addMsg('Hey — I\'m the little orb by the logo. Ask me about <b>logging in</b>, the <b>family sites</b>, or <b>getting started</b>.', 'bot');
       }
@@ -579,6 +628,7 @@
       addMsg(q.replace(/</g, '&lt;'), 'user');
       input.value = '';
       setPose('thinking');
+      poke(-1.6);
       var typing = document.createElement('div');
       typing.className = 'muse-orb-msg muse-orb-bot muse-orb-typing';
       typing.innerHTML = '<span></span><span></span><span></span>';
@@ -590,6 +640,7 @@
         typing.remove();
         addMsg(res.a, 'bot');
         setPose(res.known ? 'happy' : 'confused', 1600);
+        poke(res.known ? 2.4 : -1.2);
       }, delay);
     }
     form.addEventListener('submit', function (e) {

@@ -23,6 +23,7 @@ import argparse, hashlib, hmac, itertools, json, os, random, re, secrets, sqlite
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
+import i18n  # arena internationalization (en/zh/hi)
 import sso  # MuseFM SSO client (family global login)
 
 try:
@@ -76,10 +77,14 @@ def contains_banned(s):
     return any(w in low for w in BANNED_WORDS)
 
 class ApiError(Exception):
-    def __init__(self, status, message):
+    def __init__(self, status, message, key=None, params=None):
         super().__init__(message)
         self.status = status
         self.message = message
+        # i18n: stable catalog key + interpolation params for the message.
+        # When key is None the HTTP boundary reverse-maps message -> key.
+        self.i18n_key = key
+        self.i18n_params = params or {}
 
 # ---------------------------------------------------------------- storage
 
@@ -558,7 +563,7 @@ def bs_validate_fleet(ships):
     if not isinstance(ships, list) or len(ships) != len(BS_FLEET):
         raise ApiError(400, "fleet must have exactly %d ships "
                             "(Carrier 5, Battleship 4, Cruiser 3, "
-                            "Submarine 3, Destroyer 2)" % len(BS_FLEET))
+                            "Submarine 3, Destroyer 2)" % len(BS_FLEET), key="err.k142", params={"p0": len(BS_FLEET)})
     spec = {n: s for n, s in BS_FLEET}
     seen = {}
     occupied = {}  # (r, c) -> ship name
@@ -568,27 +573,27 @@ def bs_validate_fleet(ships):
         name, cells = entry.get("name"), entry.get("cells")
         if name not in spec:
             raise ApiError(400, "unknown ship %r — fleet is %s"
-                                % (name, ", ".join(spec)))
+                                % (name, ", ".join(spec)), key="err.k140", params={"name": repr(name), "p1": ", ".join(spec)})
         if name in seen:
-            raise ApiError(400, "duplicate ship: %s" % name)
+            raise ApiError(400, "duplicate ship: %s" % name, key="err.k139", params={"name": name})
         size = spec[name]
         if not isinstance(cells, list) or len(cells) != size:
-            raise ApiError(400, "%s needs exactly %d cells" % (name, size))
+            raise ApiError(400, "%s needs exactly %d cells" % (name, size), key="err.k138", params={"name": name, "size": size})
         pts = []
         for p in cells:
             try:
                 r, c = int(p[0]), int(p[1])
             except (TypeError, ValueError, IndexError):
-                raise ApiError(400, "%s has a bad cell: %r" % (name, p))
+                raise ApiError(400, "%s has a bad cell: %r" % (name, p), key="err.k137", params={"name": name, "p": repr(p)})
             if not (0 <= r < BS_SIZE and 0 <= c < BS_SIZE):
-                raise ApiError(400, "%s goes off the 10x10 grid" % name)
+                raise ApiError(400, "%s goes off the 10x10 grid" % name, key="err.k136", params={"name": name})
             pts.append((r, c))
         if len(set(pts)) != size:
-            raise ApiError(400, "%s has duplicate cells" % name)
+            raise ApiError(400, "%s has duplicate cells" % name, key="err.k135", params={"name": name})
         rs = {r for r, _ in pts}
         cs = {c for _, c in pts}
         if len(rs) != 1 and len(cs) != 1:
-            raise ApiError(400, "%s must sit in a straight line" % name)
+            raise ApiError(400, "%s must sit in a straight line" % name, key="err.k134", params={"name": name})
         if len(rs) == 1:
             r0 = next(iter(rs))
             exp = sorted((r0, c) for c in range(min(cs), min(cs) + size))
@@ -596,10 +601,10 @@ def bs_validate_fleet(ships):
             c0 = next(iter(cs))
             exp = sorted((r, c0) for r in range(min(rs), min(rs) + size))
         if sorted(pts) != exp:
-            raise ApiError(400, "%s's cells must be contiguous" % name)
+            raise ApiError(400, "%s's cells must be contiguous" % name, key="err.k133", params={"name": name})
         for p in pts:
             if p in occupied:
-                raise ApiError(400, "%s overlaps %s" % (name, occupied[p]))
+                raise ApiError(400, "%s overlaps %s" % (name, occupied[p]), key="err.k132", params={"name": name, "p1": occupied[p]})
         for (r, c) in pts:
             for dr in (-1, 0, 1):
                 for dc in (-1, 0, 1):
@@ -607,7 +612,7 @@ def bs_validate_fleet(ships):
                     if nb in occupied:
                         raise ApiError(400, "%s touches %s — ships need a "
                                             "one-cell gap all around"
-                                        % (name, occupied[nb]))
+                                        % (name, occupied[nb]), key="err.k131", params={"name": name, "p1": occupied[nb]})
         for p in pts:
             occupied[p] = name
         seen[name] = sorted([list(p) for p in pts])
@@ -1086,7 +1091,7 @@ class Arena:
         pid = self._insert("INSERT INTO players (name, token, created_at) VALUES (?,?,?)",
                            (name, token, now()))
         return {"player_id": pid, "name": name, "token": token,
-                "note": "keep your token secret — it is your identity here"}
+                "note": i18n.t("api.k001")}
 
     # -- humans vs agents (v2.8, checkers) ---------------------------------
     # Humans are players rows with is_human=1, keyed by wallet address.
@@ -1133,7 +1138,7 @@ class Arena:
                 row["name"] = name
             return {"player_id": row["id"], "name": row["name"],
                     "token": row["token"], "wallet": row.get("wallet") or "",
-                    "note": "keep your token secret — it is your identity here"}
+                    "note": i18n.t("api.k001")}
         if wallet:
             if self._row("SELECT id FROM players WHERE wallet=? AND is_human=1",
                          (wallet,)):
@@ -1150,7 +1155,7 @@ class Arena:
                            " VALUES (?,?,?,?,?)",
                            (name, new_token, 1, wallet, now()))
         return {"player_id": pid, "name": name, "token": new_token, "wallet": wallet,
-                "note": "keep your token secret — it is your identity here"}
+                "note": i18n.t("api.k001")}
 
     def sso_link_identity(self, fm_id, handle):
         """Map a verified MuseFM identity to an arena player row.
@@ -1243,7 +1248,7 @@ class Arena:
             raise ApiError(403, "human challengers only")
         kind = (kind or "checkers").lower()
         if kind not in BOARD_KINDS:
-            raise ApiError(400, "kind must be one of: " + ", ".join(BOARD_KINDS))
+            raise ApiError(400, "kind must be one of: " + ", ".join(BOARD_KINDS), key="err.k115", params={"p0": ", ".join(BOARD_KINDS)})
         mode = (mode or "staked").lower()
         if mode not in GAME_MODES:
             raise ApiError(400, "mode must be 'staked' or 'casual'")
@@ -1273,7 +1278,7 @@ class Arena:
                 if not s:
                     return self.board_game_state(g["id"], human["id"])
                 raise ApiError(409, "you already have an open %s game — finish it"
-                                    " or resign before challenging someone new" % kind)
+                                    " or resign before challenging someone new" % kind, key="err.k111", params={"kind": kind})
         if not s:
             raise ApiError(404, "no open game — challenge Zuckbot (or another"
                                 " agent) to start one")
@@ -1433,9 +1438,9 @@ class Arena:
                 "amount_usd": "1.00", "amount_units": self.STAKE_UNITS,
                 "status": stake["status"], "game_staked": info["staked"],
                 "stake_tx": tx_hash, "network": "eip155:8453",
-                "note": ("both sides staked — game is live, winner takes $1.90"
+                "note": (i18n.t("api.k004")
                          if info["staked"] else
-                         "stake recorded — game goes live when both sides stake")}
+                         i18n.t("api.k005"))}
 
     def _note_bot_move(self, kind, ms):
         """Observability only: record one bot move-computation timing."""
@@ -1658,7 +1663,7 @@ class Arena:
             self._q("UPDATE sentences SET hidden=1 WHERE id=?", (sentence_id,))
             hidden = True
         return {"ok": True, "flags": s["flags"], "hidden": hidden,
-                "note": "2 flags auto-hides pending room-owner review" if hidden else "flag recorded"}
+                "note": (i18n.t("api.k006") if hidden else i18n.t("api.k007"))}
 
     def moderate_sentence(self, player, sentence_id, action):
         s = self._row("SELECT * FROM sentences WHERE id=?", (sentence_id,))
@@ -1741,7 +1746,7 @@ class Arena:
             raise ApiError(400, "no questions left")
         expected = players[g["turn_pos"] % len(players)]
         if player["id"] != expected:
-            raise ApiError(403, f"not your turn — waiting on {self._player_name(expected)}")
+            raise ApiError(403, f"not your turn — waiting on {self._player_name(expected)}", key="err.k081", params={"p0": self._player_name(expected)})
         q = questions[g["q_index"]]
         given = clean_text(answer, 200)
         ok = given.lower() == q["answer"].lower()
@@ -1939,7 +1944,7 @@ class Arena:
         legal = [m["action"] for m in self._poker_legal(state, side)]
         if move["action"] not in legal:
             raise ApiError(400,
-                           "illegal action — legal now: " + ", ".join(legal))
+                           "illegal action — legal now: " + ", ".join(legal), key="err.k078", params={"p0": ", ".join(legal)})
         return self._poker_apply(game_id, state, players, side, move)
 
     def _poker_normalize_uncalled(self, state):
@@ -1987,7 +1992,7 @@ class Arena:
                 raise ApiError(400, "bet needs an integer amount")
             if amt < state["bb"]:
                 raise ApiError(400, "minimum bet is the big blind (%d)"
-                               % state["bb"])
+                               % state["bb"], key="err.k073", params={"p0": state["bb"]})
             if amt > stack:
                 raise ApiError(400, "bet exceeds your stack — use allin")
             commit, aggressive = amt, True
@@ -2001,7 +2006,7 @@ class Arena:
                 raise ApiError(400, "raise needs an integer total amount")
             min_total = 2 * state["current_bet"]
             if total < min_total:
-                raise ApiError(400, "minimum raise is to %d total" % min_total)
+                raise ApiError(400, "minimum raise is to %d total" % min_total, key="err.k069", params={"min_total": min_total})
             extra = total - state["bets"][side]
             if extra <= 0:
                 raise ApiError(400, "raise must increase your total bet")
@@ -2307,7 +2312,7 @@ class Arena:
         legal = [m["action"] for m in self._bj_legal(state, side)]
         if move["action"] not in legal:
             raise ApiError(400,
-                           "illegal action — legal now: " + ", ".join(legal))
+                           "illegal action — legal now: " + ", ".join(legal), key="err.k065", params={"p0": ", ".join(legal)})
         return self._bj_apply(game_id, state, players, side, move)
 
     def _bj_apply(self, game_id, state, players, side, move):
@@ -2528,11 +2533,10 @@ class Arena:
             cards = self._secret_get(game_id, h, player["id"]) or []
             return {"game_id": game_id, "kind": "poker", "hand_no": h,
                     "cards": cards, "deck_commit": state.get("deck_commit"),
-                    "note": "your hole cards — keep them secret until showdown"}
+                    "note": i18n.t("api.k002")}
         return {"game_id": game_id, "kind": "blackjack", "hand_no": h,
                 "cards": list(state["hands"][side]),
-                "note": "your hand is public; only the dealer hole stays"
-                        " secret until the reveal"}
+                "note": i18n.t("api.k003")}
 
     # -- GAME: board games (checkers / connect4 / tictactoe) ------
     def _resolve_opponent(self, room_id, player, opponent):
@@ -2552,7 +2556,7 @@ class Arena:
             if e.status == 403:  # it's the OPPONENT who hasn't joined, not you
                 raise ApiError(403, "%s hasn't joined the room yet — ask them "
                                "to join first: POST /api/rooms/%d/join"
-                               % (opp["name"], room_id))
+                               % (opp["name"], room_id), key="err.k059", params={"p0": opp["name"], "room_id": room_id})
             raise
         return opp
 
@@ -2929,14 +2933,14 @@ class Arena:
             tx = s.get("payout_tx")
             result = s.get("result", "settled")
             if result not in ("paid", "refunded", "no_payout", "settled"):
-                raise ApiError(400, f"bad result for stake {sid}")
+                raise ApiError(400, f"bad result for stake {sid}", key="err.k052", params={"sid": sid})
             if tx is not None and not (
                     isinstance(tx, str) and tx.startswith("0x")
                     and len(tx) == 66):
-                raise ApiError(400, f"bad payout_tx for stake {sid}")
+                raise ApiError(400, f"bad payout_tx for stake {sid}", key="err.k051", params={"sid": sid})
             if tx is None and result != "no_payout":
                 raise ApiError(400,
-                               f"stake {sid}: payout_tx required unless no_payout")
+                               f"stake {sid}: payout_tx required unless no_payout", key="err.k050", params={"sid": sid})
             cur = self._q(
                 "UPDATE stakes SET status=?, payout_tx=? "
                 "WHERE id=? AND status='complete' AND payout_tx IS NULL",
@@ -2975,7 +2979,7 @@ class Arena:
             raise ApiError(404, "no such game")
         g = dict(g)
         if g["status"] != "open":
-            raise ApiError(409, "game is not open (status=%s)" % g["status"])
+            raise ApiError(409, "game is not open (status=%s)" % g["status"], key="err.k047", params={"p0": g["status"]})
         live = self._row("SELECT id FROM stakes WHERE game_id=? "
                          "AND status IN ('pending','active') "
                          "AND stake_tx<>'house'", (int(game_id),))
@@ -3034,7 +3038,7 @@ class Arena:
             import bots as _bots  # lazy: bots.py imports app at module load
         g = self._board_row(int(game_id))
         if g["status"] != "open":
-            raise ApiError(409, "game is not open (status=%s)" % g["status"])
+            raise ApiError(409, "game is not open (status=%s)" % g["status"], key="err.k043", params={"p0": g["status"]})
         kind = g["kind"]
         if kind not in ("checkers", "connect4", "tictactoe", "battleship"):
             raise ApiError(400, "playout supports checkers, connect4, "
@@ -3046,7 +3050,7 @@ class Arena:
                 break
             moves += 1
             if moves > 800:
-                raise ApiError(500, "game %s did not terminate" % game_id)
+                raise ApiError(500, "game %s did not terminate" % game_id, key="err.k041", params={"game_id": game_id})
             players = json.loads(gg["players_json"])
             turn = gg["turn_pid"]
             side = players.index(turn)
@@ -3055,7 +3059,7 @@ class Arena:
             mv = self._exhibition_bot_move(
                 _bots, kind, json.loads(gg["state_json"]), side)
             if not mv:
-                raise ApiError(500, "bot found no move in game %s" % game_id)
+                raise ApiError(500, "bot found no move in game %s" % game_id, key="err.k040", params={"game_id": game_id})
             self.make_move(actor, int(game_id), mv)
         fin = self._board_row(int(game_id))
         return {"ok": True, "game_id": int(game_id),
@@ -3187,8 +3191,7 @@ class Arena:
             "standings": [{"player": s["player_name"], "wins": s["wins"],
                            "losses": s["losses"]}
                           for s in self.tournament_standings()],
-            "note": ("the pot pays out when it reaches the $50 target — "
-                     "winner takes 90%, house keeps 10%"),
+            "note": i18n.t("api.k008"),
         }
 
     def check_tournament_enterable(self, player, player_address):
@@ -3281,7 +3284,7 @@ class Arena:
             clock = g2.get("turn_clock") or MOVE_CLOCK_SECONDS
             raise ApiError(409,
                            "time! %s ran out the %ds clock — %s wins by forfeit"
-                           % (idle_name, clock, winner_name))
+                           % (idle_name, clock, winner_name), key="err.k030", params={"idle_name": idle_name, "clock": clock, "winner_name": winner_name})
         g = self._board_row(game_id)
         if g["status"] != "open":
             raise ApiError(400, "game is over")
@@ -3290,7 +3293,7 @@ class Arena:
             raise ApiError(403, "you're not a player in this game")
         if player["id"] != g["turn_pid"]:
             raise ApiError(403,
-                           f"not your turn — waiting on {self._player_name(g['turn_pid'])}")
+                           f"not your turn — waiting on {self._player_name(g['turn_pid'])}", key="err.k029", params={"p0": self._player_name(g['turn_pid'])})
         # v2.8: humans must stake their $1 before their first move.
         # v2.11: casual games are free play — no stake required to move.
         if player.get("is_human") and self._game_mode(g) != "casual":
@@ -3373,10 +3376,11 @@ class Arena:
             except (KeyError, TypeError, ValueError, IndexError):
                 raise ApiError(400, 'move must look like {"from": [5,2], "to": [4,3]}')
             if m not in legal:
+                cap_avail = any(abs(x["to"][0] - x["from"][0]) == 2 for x in legal)
                 hint = (" — a capture is available and captures are mandatory"
-                        if any(abs(x["to"][0] - x["from"][0]) == 2 for x in legal)
+                        if cap_avail
                         else "")
-                raise ApiError(400, "illegal move — not in legal_moves" + hint)
+                raise ApiError(400, "illegal move — not in legal_moves" + hint, key="err.k019", params={"hint": i18n.t("err.k143") if cap_avail else ""})
             board, captured, _promoted, chain2 = chk_apply(state["board"], side, m)
             halfmove = 0 if captured else state.get("halfmove", 0) + 1
             state = {"board": board, "halfmove": halfmove, "chain": chain2}
@@ -3472,8 +3476,8 @@ class Arena:
                                 players, winner_id, False, "resignation")
         return {"ok": True, "resigned": player["name"],
                 "winner": self._player_name(winner_id),
-                "note": "%s wins by resignation (+%d pts)"
-                        % (self._player_name(winner_id), WIN_POINTS)}
+                "note": i18n.t("api.k009", winner=self._player_name(winner_id),
+                              pts=WIN_POINTS)}
 
     # -- leaderboard ---------------------------------------------
     def leaderboard(self, room_id=None):
@@ -3624,23 +3628,23 @@ MA_SIDEBAR_CSS = """<style>
 </style>"""
 
 MA_SIDEBAR_HTML = """
-<aside class="ma-side" id="maSide" aria-label="Site navigation">
-  <a class="ma-sb-brand" href="/"><span class="ma-sb-mark">&#127919;</span><span class="ma-sb-name">MUSEFM <em>ARENA</em></span></a>
-  <a class="ma-sb-cta" href="/play">&#9823;&#65039; CHALLENGE ZUCKBOT</a>
-  <nav class="ma-sb-sec" aria-label="Arena">
-    <div class="ma-sb-h">Arena</div>
-    <a href="/" data-path="/"><span class="ic">&#127968;</span>Home</a>
-    <a href="/play" data-path="/play"><span class="ic">&#9823;&#65039;</span>Play</a>
-    <a href="/watch" data-path="/watch"><span class="ic">&#128064;</span>Watch</a>
-    <a href="/api/spectate" data-path="/api/spectate"><span class="ic">&#128225;</span>Live data</a>
-    <a href="/network" data-path="/network"><span class="ic">&#127760;</span>Network</a>
+<aside class="ma-side" id="maSide" aria-label="{{t:sidebar.k025}}">
+  <a class="ma-sb-brand" href="/"><span class="ma-sb-mark">{{t:sidebar.k001}}</span><span class="ma-sb-name">{{t:sidebar.k002}} <em>{{t:sidebar.k003}}</em></span></a>
+  <a class="ma-sb-cta" href="/play">{{t:sidebar.k004}}</a>
+  <nav class="ma-sb-sec" aria-label="{{t:sidebar.k005}}">
+    <div class="ma-sb-h">{{t:sidebar.k005}}</div>
+    <a href="/" data-path="/"><span class="ic">{{t:sidebar.k006}}</span>{{t:sidebar.k007}}</a>
+    <a href="/play" data-path="/play"><span class="ic">{{t:sidebar.k008}}</span>{{t:sidebar.k009}}</a>
+    <a href="/watch" data-path="/watch"><span class="ic">{{t:sidebar.k010}}</span>{{t:sidebar.k011}}</a>
+    <a href="/api/spectate" data-path="/api/spectate"><span class="ic">{{t:sidebar.k012}}</span>{{t:sidebar.k013}}</a>
+    <a href="/network" data-path="/network"><span class="ic">{{t:sidebar.k014}}</span>{{t:sidebar.k015}}</a>
   </nav>
-  <nav class="ma-sb-sec" aria-label="Family">
-    <div class="ma-sb-h">Family</div>
-    <a href="https://musefm.lol/playbook"><span class="ic">&#128218;</span>The Playbook</a>
-    <a href="https://musefm.lol/pro"><span class="ic">&#9889;</span>Exchange Pro</a>
-    <a href="https://musefm.lol/trustline"><span class="ic">&#129309;</span>Trustline</a>
-    <a href="https://musefm.lol/links"><span class="ic">&#127897;</span>MuseFM</a>
+  <nav class="ma-sb-sec" aria-label="{{t:sidebar.k016}}">
+    <div class="ma-sb-h">{{t:sidebar.k016}}</div>
+    <a href="https://musefm.lol/playbook"><span class="ic">{{t:sidebar.k017}}</span>{{t:sidebar.k018}}</a>
+    <a href="https://musefm.lol/pro"><span class="ic">{{t:sidebar.k019}}</span>{{t:sidebar.k020}}</a>
+    <a href="https://musefm.lol/trustline"><span class="ic">{{t:sidebar.k021}}</span>{{t:sidebar.k022}}</a>
+    <a href="https://musefm.lol/links"><span class="ic">{{t:sidebar.k023}}</span>{{t:sidebar.k024}}</a>
   </nav>
 </aside>
 <div class="ma-scrim" id="maScrim"></div>
@@ -3697,15 +3701,15 @@ WATCH_HTML = """
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 <link rel="icon" type="image/png" href="/favicon.png">
-<title>MuseFM Arena — Live</title>
-<meta property="og:title" content="Muse Arena — $1 USDC staked board battles">
-<meta property="og:description" content="Muses battle in Checkers, Connect Four, Tic-Tac-Toe, Poker and Blackjack for real USDC stakes. $1 to enter the $50 tournament pot — winner takes 90%. Watch it live.">
+<title>{{t:watch.k001}}</title>
+<meta property="og:title" content="{{t:watch.k041}}">
+<meta property="og:description" content="{{t:watch.k042}}">
 <meta property="og:image" content="https://muse-arena.onrender.com/og-image.png">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://muse-arena.onrender.com/watch">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Muse Arena — $1 USDC staked board battles">
-<meta name="twitter:description" content="Checkers · Connect Four · Tic-Tac-Toe · Poker · Blackjack for real USDC stakes. $1 enters the $50 pot — winner takes 90%.">
+<meta name="twitter:title" content="{{t:watch.k041}}">
+<meta name="twitter:description" content="{{t:watch.k043}}">
 <meta name="twitter:image" content="https://muse-arena.onrender.com/og-image.png">
 <style>
 :root{color-scheme:dark;--bg:#070b12;--card:#101828;--line:#1e2a44;
@@ -4173,13 +4177,13 @@ box-shadow:0 30px 60px rgba(0,0,0,.6),inset 0 0 0 3px #1d3a5f}
 </head>
 <body>
 <!-- musefm family bar — canonical copy: ~/workspace/musefm-merge/family-bar.html -->
-<nav class="fmf-bar" aria-label="MuseFM family sites">
-  <span class="fmf-label">the <strong>musefm</strong> family</span>
-  <a class="fmf-link" href="https://musefm.lol/links"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="3" width="6" height="7"/><rect x="11" y="10" width="2" height="4"/><rect x="8" y="14" width="8" height="2"/><rect x="10" y="16" width="4" height="2"/><rect x="7" y="18" width="10" height="2"/></g></svg>MuseFM</a>
-  <a class="fmf-link fmf-here" href="https://muse-arena.onrender.com"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="2" y="9" width="4" height="8"/><rect x="4" y="7" width="16" height="9"/><rect x="18" y="9" width="4" height="8"/></g></svg>MuseFM Arena</a>
-  <a class="fmf-link" href="https://musefm.lol/playbook"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="3" y="7" width="8" height="11"/><rect x="13" y="7" width="8" height="11"/><rect x="11" y="5" width="2" height="14"/></g></svg>MuseFM Playbook</a>
-  <a class="fmf-link" href="https://musefm.lol/pro"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="4" width="6" height="2"/><rect x="7" y="6" width="10" height="3"/><rect x="6" y="9" width="12" height="8"/><rect x="7" y="17" width="10" height="3"/><rect x="9" y="20" width="6" height="2"/></g></svg>MuseFM Exchange Pro</a>
-  <a class="fmf-link" href="https://musefm.lol/trustline"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="8" y="3" width="8" height="3"/><rect x="6" y="6" width="12" height="7"/><rect x="7" y="13" width="10" height="3"/><rect x="9" y="16" width="6" height="2"/><rect x="10" y="18" width="4" height="2"/><rect x="11" y="20" width="2" height="2"/></g></svg>MuseFM Trustline</a>
+<nav class="fmf-bar" aria-label="{{t:watch.k039}}">
+  <span class="fmf-label">{{t:watch.k002}} <strong>{{t:watch.k003}}</strong> {{t:watch.k004}}</span>
+  <a class="fmf-link" href="https://musefm.lol/links"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="3" width="6" height="7"/><rect x="11" y="10" width="2" height="4"/><rect x="8" y="14" width="8" height="2"/><rect x="10" y="16" width="4" height="2"/><rect x="7" y="18" width="10" height="2"/></g></svg>{{t:watch.k005}}</a>
+  <a class="fmf-link fmf-here" href="https://muse-arena.onrender.com"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="2" y="9" width="4" height="8"/><rect x="4" y="7" width="16" height="9"/><rect x="18" y="9" width="4" height="8"/></g></svg>{{t:watch.k006}}</a>
+  <a class="fmf-link" href="https://musefm.lol/playbook"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="3" y="7" width="8" height="11"/><rect x="13" y="7" width="8" height="11"/><rect x="11" y="5" width="2" height="14"/></g></svg>{{t:watch.k007}}</a>
+  <a class="fmf-link" href="https://musefm.lol/pro"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="4" width="6" height="2"/><rect x="7" y="6" width="10" height="3"/><rect x="6" y="9" width="12" height="8"/><rect x="7" y="17" width="10" height="3"/><rect x="9" y="20" width="6" height="2"/></g></svg>{{t:watch.k008}}</a>
+  <a class="fmf-link" href="https://musefm.lol/trustline"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="8" y="3" width="8" height="3"/><rect x="6" y="6" width="12" height="7"/><rect x="7" y="13" width="10" height="3"/><rect x="9" y="16" width="6" height="2"/><rect x="10" y="18" width="4" height="2"/><rect x="11" y="20" width="2" height="2"/></g></svg>{{t:watch.k009}}</a>
 </nav>
 <style>
 .fmf-bar{display:flex;flex-wrap:wrap;align-items:center;gap:4px 16px;padding:7px 16px;background:#0b1220;border-bottom:1px solid #1e293b;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,Helvetica,Arial,sans-serif;font-size:12.5px;line-height:1.5;color:#94a3b8}
@@ -4194,42 +4198,42 @@ box-shadow:0 30px 60px rgba(0,0,0,.6),inset 0 0 0 3px #1d3a5f}
 
 <header class="topbar">
   <div style="display:flex;align-items:center;gap:12px">
-    <button class="ma-burger" aria-label="Open menu" aria-expanded="false"><span></span><span></span><span></span></button>
-    <a class="brand" href="/" style="text-decoration:none;color:inherit">🎯 MUSEFM <em>ARENA</em></a>
+    <button class="ma-burger" aria-label="{{t:watch.k040}}" aria-expanded="false"><span></span><span></span><span></span></button>
+    <a class="brand" href="/" style="text-decoration:none;color:inherit">{{t:watch.k010}} <em>{{t:watch.k011}}</em></a>
   </div>
   <div style="display:flex;align-items:center;gap:14px">
-    <div class="livebadge"><span class="dot"></span>LIVE</div>
-    <a class="playbtn" href="/play">♟️ play vs bot</a>
+    <div class="livebadge"><span class="dot"></span>{{t:watch.k012}}</div>
+    <a class="playbtn" href="/play">{{t:watch.k013}}</a>
   </div>
 </header>
 <div class="wrap">
-  <div class="updated" id="updated">connecting…</div>
+  <div class="updated" id="updated">{{t:watch.k014}}</div>
 
   <section class="pot-hero">
-    <div class="pot-label">🏆 TOURNAMENT POT</div>
-    <div class="pot-amount" id="potAmount">$0.00</div>
-    <div class="pot-target">— $50 TARGET —</div>
+    <div class="pot-label">{{t:watch.k015}}</div>
+    <div class="pot-amount" id="potAmount">{{t:watch.k016}}</div>
+    <div class="pot-target">{{t:watch.k017}}</div>
     <div class="pot-bar"><div class="pot-fill" id="potFill"></div></div>
-    <div class="pot-meta" id="potMeta">loading the pot…</div>
+    <div class="pot-meta" id="potMeta">{{t:watch.k018}}</div>
     <div class="pot-stands" id="potStands"></div>
   </section>
 
   <div class="grid">
     <main>
       <section id="entrypage"></section>
-      <section class="sec" id="boardsSec"><h2 id="boardsTitle">♟&nbsp; Live Boards</h2><div id="viewbar" style="display:none"></div><div id="boards"><div class="empty">loading boards…</div></div></section>
-      <section class="sec"><h2>📰&nbsp; Recent Results</h2><div id="results"><div class="empty">loading results…</div></div></section>
+      <section class="sec" id="boardsSec"><h2 id="boardsTitle">{{t:watch.k019}}</h2><div id="viewbar" style="display:none"></div><div id="boards"><div class="empty">{{t:watch.k020}}</div></div></section>
+      <section class="sec"><h2>{{t:watch.k021}}</h2><div id="results"><div class="empty">{{t:watch.k022}}</div></div></section>
     </main>
     <aside>
-      <section class="panel"><h2>📅 This Week's Board <span class="htag">#ArenaChamp</span></h2><div id="champ"></div><div id="weekly"><div class="empty">loading…</div></div></section>
-      <section class="panel"><h2>🏆 Leaderboard</h2><div id="leaderboard"><div class="empty">loading…</div></div></section>
-      <section class="panel"><h2>🏠 Rooms</h2><div id="rooms"><div class="empty">loading…</div></div></section>
+      <section class="panel"><h2>{{t:watch.k023}} <span class="htag">{{t:watch.k024}}</span></h2><div id="champ"></div><div id="weekly"><div class="empty">{{t:watch.k025}}</div></div></section>
+      <section class="panel"><h2>{{t:watch.k026}}</h2><div id="leaderboard"><div class="empty">{{t:watch.k025}}</div></div></section>
+      <section class="panel"><h2>{{t:watch.k027}}</h2><div id="rooms"><div class="empty">{{t:watch.k025}}</div></div></section>
     </aside>
   </div>
 
-  <footer>muse arena — part of the musefm family · muses playing for real stakes · $1 entry · winner takes $1.90<br>
-  <a href="/">home</a> · <a href="/play">play vs bot</a> · <a href="/api/spectate">live data</a><br>
-  the musefm family: <a href="https://musefm.lol/playbook"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="3" y="7" width="8" height="11"/><rect x="13" y="7" width="8" height="11"/><rect x="11" y="5" width="2" height="14"/></g></svg>the playbook</a> · <a href="https://musefm.lol/pro"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="4" width="6" height="2"/><rect x="7" y="6" width="10" height="3"/><rect x="6" y="9" width="12" height="8"/><rect x="7" y="17" width="10" height="3"/><rect x="9" y="20" width="6" height="2"/></g></svg>exchange pro</a> · <a href="https://musefm.lol/trustline"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="8" y="3" width="8" height="3"/><rect x="6" y="6" width="12" height="7"/><rect x="7" y="13" width="10" height="3"/><rect x="9" y="16" width="6" height="2"/><rect x="10" y="18" width="4" height="2"/><rect x="11" y="20" width="2" height="2"/></g></svg>trustline</a> · <a href="https://musefm.lol/links"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="3" width="6" height="7"/><rect x="11" y="10" width="2" height="4"/><rect x="8" y="14" width="8" height="2"/><rect x="10" y="16" width="4" height="2"/><rect x="7" y="18" width="10" height="2"/></g></svg>musefm</a> · <a href="/network">all sites →</a><br>\nwatching a great match? <a href=\"https://musefm.lol/links\">talk about it on musefm →</a></footer>
+  <footer>{{t:watch.k028}}<br>
+  <a href="/">{{t:watch.k029}}</a> · <a href="/play">{{t:watch.k030}}</a> · <a href="/api/spectate">{{t:watch.k031}}</a><br>
+  {{t:watch.k032}} <a href="https://musefm.lol/playbook"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="3" y="7" width="8" height="11"/><rect x="13" y="7" width="8" height="11"/><rect x="11" y="5" width="2" height="14"/></g></svg>{{t:watch.k033}}</a> · <a href="https://musefm.lol/pro"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="4" width="6" height="2"/><rect x="7" y="6" width="10" height="3"/><rect x="6" y="9" width="12" height="8"/><rect x="7" y="17" width="10" height="3"/><rect x="9" y="20" width="6" height="2"/></g></svg>{{t:watch.k034}}</a> · <a href="https://musefm.lol/trustline"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="8" y="3" width="8" height="3"/><rect x="6" y="6" width="12" height="7"/><rect x="7" y="13" width="10" height="3"/><rect x="9" y="16" width="6" height="2"/><rect x="10" y="18" width="4" height="2"/><rect x="11" y="20" width="2" height="2"/></g></svg>{{t:watch.k035}}</a> · <a href="https://musefm.lol/links"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="3" width="6" height="7"/><rect x="11" y="10" width="2" height="4"/><rect x="8" y="14" width="8" height="2"/><rect x="10" y="16" width="4" height="2"/><rect x="7" y="18" width="10" height="2"/></g></svg>{{t:watch.k003}}</a> · <a href="/network">{{t:watch.k036}}</a><br>{{t:watch.k037}} <a href=\"https://musefm.lol/links\">{{t:watch.k038}}</a></footer>
 </div>
 <script>
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){
@@ -4241,10 +4245,10 @@ function kindIcon(k){
   return k==="checkers"?"♞":k==="connect4"?"🔵":k==="tictactoe"?"⭕":
          k==="poker"?"🂡":k==="blackjack"?"🂱":k==="battleship"?"🚢":"🎲";}
 function kindName(k){
-  return k==="checkers"?"Checkers":k==="connect4"?"Connect Four":k==="tictactoe"?"Tic-Tac-Toe":
+  return k==="checkers"?"Checkers":k==="connect4"?__t("watch.k044"):k==="tictactoe"?"Tic-Tac-Toe":
          k==="poker"?"Poker":k==="blackjack"?"Blackjack":k==="battleship"?"Battleship":String(k);}
 function pill(g){
-  var h='<span class="pill'+(g.status==="finished"?" fin":"")+'">'+esc(g.status)+"</span>";
+  var h='<span class="pill'+(g.status==="finished"?__t("watch.k045"):"")+'">'+esc(g.status)+"</span>";
   if(g.status!=="finished")h+='<span class="live-tag"><i></i>live</span>';
   if(g.staked)h+='<span class="pill gold">💰 $'+(g.stake_pot_units/1e6).toFixed(2)+"</span>";
   return h;}
@@ -4283,7 +4287,7 @@ function chkHTML(g){
     var dark=(r+c)%2===1,v=g.board[r]&&g.board[r][c],pc="";
     var isLM=(lmT&&lmT[0]===r&&lmT[1]===c)||(lmF&&lmF[0]===r&&lmF[1]===c);
     if(v){var king=(v==="B"||v==="W"),side=(String(v).toLowerCase()==="b")?"pb":"pw";
-      pc='<div class="piece '+side+(king?" king":"")+'">'+(king?"♛":"")+"</div>";}
+      pc='<div class="piece '+side+(king?__t("watch.k046"):"")+'">'+(king?"♛":"")+"</div>";}
     h+='<div class="chk-cell '+(dark?"dark":"light")+(isLM?" lm":"")+'">'+pc+"</div>";}
   return h+"</div></div>"+legend(g);
 }
@@ -4292,7 +4296,7 @@ function cardHTML(c){
   var r=c.slice(0,-1),s=c.slice(-1);
   var suit={s:"♠",h:"♥",d:"♦",c:"♣"}[s]||s;
   var red=(s==="h"||s==="d");
-  return '<div class="pcard'+(red?" red":"")+'">'+
+  return '<div class="pcard'+(red?__t("watch.k047"):"")+'">'+
     '<div class="cnr tl">'+esc(r)+"<br>"+suit+'</div>'+
     '<div class="pip">'+suit+"</div>"+
     '<div class="cnr br">'+esc(r)+"<br>"+suit+"</div></div>";}
@@ -4310,8 +4314,8 @@ function chipCountFor(pot){return pot>400?4:pot>150?3:pot>40?2:1;}
 function pokerHTML(g){
   var p=g.poker;if(!p)return '<div class="empty">table unavailable</div>';
   var pl=g.players||[],h='<div class="cardtable"><div class="felt">';
-  h+='<div class="pclabel">\u2660\u2665 HAND '+p.hand_no+'/'+p.hands_cap+(p.sudden_death?" \u00b7 SUDDEN DEATH":"")+
-     " \u00b7 BLINDS "+p.blinds[0]+"/"+p.blinds[1]+" \u2666\u2663</div>";
+  h+='<div class="pclabel">\u2660\u2665 HAND '+p.hand_no+'/'+p.hands_cap+(p.sudden_death?__t("watch.k048"):"")+
+     __t("watch.k049")+p.blinds[0]+"/"+p.blinds[1]+" \u2666\u2663</div>";
   h+='<div class="zone"><div class="pclabel">COMMUNITY \u00b7 '+esc(String(p.street).toUpperCase())+"</div>";
   h+='<div class="prow">'+(p.community.length?p.community.map(cardHTML).join(""):
     '<span style="color:#8fd0a0;font-size:.8rem">no cards yet</span>')+"</div></div>";
@@ -4320,7 +4324,7 @@ function pokerHTML(g){
      (p.to_call?'<div class="sub">'+esc(p.to_act)+" to call <b>"+p.to_call+"</b></div>":"")+"</div></div>";
   for(var i=0;i<2;i++){
     var nm=pl[i]||("P"+(i+1)),stk=(p.stacks||{})[nm];
-    h+='<div class="seat'+(g.turn===nm?" active":"")+'"><div class="prow">'+cardHTML(null)+cardHTML(null)+"</div>";
+    h+='<div class="seat'+(g.turn===nm?__t("watch.k050"):"")+'"><div class="prow">'+cardHTML(null)+cardHTML(null)+"</div>";
     h+='<div class="plaque">'+(p.button===nm?'<span class="dbtn">D</span>':"")+
        '<span class="nm">'+esc(nm)+'</span><span class="stk">'+(stk!=null?stk:"\u2013")+"</span></div></div>";
   }
@@ -4342,17 +4346,17 @@ function bjHTML(g){
   h+='<div class="prow">'+b.dealer_hand.map(cardHTML).join("")+"</div></div>";
   for(var i=0;i<2;i++){
     var nm=pl[i]||("P"+(i+1)),tot=(b.player_totals&&b.player_totals[nm])||[0,false];
-    h+='<div class="seat'+(g.turn===nm?" active":"")+'"><div class="prow">'+(b.player_hands[nm]||[]).map(cardHTML).join("")+"</div>";
+    h+='<div class="seat'+(g.turn===nm?__t("watch.k050"):"")+'"><div class="prow">'+(b.player_hands[nm]||[]).map(cardHTML).join("")+"</div>";
     h+='<div class="plaque">'+chipStack(1)+'<span class="nm">'+esc(nm)+'</span>'+
-       '<span class="stk">'+tot[0]+(tot[1]?" soft":"")+'</span>'+
+       '<span class="stk">'+tot[0]+(tot[1]?__t("watch.k051"):"")+'</span>'+
        '<span class="meta">bet <b style="color:#ffd34d">'+b.bets[nm]+"</b></span></div></div>";
   }
-  h+='<div class="pclabel">SHOE \u00b7 '+b.shoe.dealt+" dealt \u00b7 "+b.shoe.remaining+" left</div>";
+  h+='<div class="pclabel">SHOE \u00b7 '+b.shoe.dealt+__t("watch.k052")+b.shoe.remaining+" left</div>";
   if(b.last_action)h+='<div class="lastaction">'+esc(b.last_action)+"</div>";
   return h+"</div></div>"+cardLegend(g,b.stacks);}
 function reasonLabel(r){
-  return {timeout:"⏱ timeout",resignation:"resignation",showdown:"showdown",
-    bust:"bust-out",chips:"chip lead",draw:"draw",win:"win"}[r]||r;}
+  return {timeout:__t("watch.k053"),resignation:"resignation",showdown:"showdown",
+    bust:"bust-out",chips:__t("watch.k054"),draw:"draw",win:"win"}[r]||r;}
 var seenFp={};
 var focusGid=null,focusKind=null,entryKind=null;
 var GAME_KINDS=["checkers","connect4","tictactoe","poker","blackjack","battleship"];
@@ -4365,24 +4369,24 @@ function readHash(){
 readHash();
 window.addEventListener("hashchange",function(){readHash();load();});
 var GAME_INFO={
- checkers:{tag:"English draughts — mandatory captures, multi-jumps, crowned kings.",
-  blurb:"Outplay or go home. Every jump is forced, every king earned.",
-  format:"Head-to-head · full game",stakes:"$1 per match · winner takes $1.90"},
- connect4:{tag:"Drop tokens, line up four.",
-  blurb:"The fastest mind-reading game in the arena.",
-  format:"Head-to-head · first to connect four",stakes:"$1 per match · winner takes $1.90"},
- tictactoe:{tag:"The classic — deceptively deep.",
-  blurb:"Deceptively deep when there's money on every move.",
-  format:"Head-to-head · three in a row",stakes:"$1 per match · winner takes $1.90"},
- poker:{tag:"Heads-up Texas Hold'em.",
-  blurb:"Bluff like you mean it.",
-  format:"100 chips · rising blinds · 60-hand cap",stakes:"$1 per match · winner takes $1.90"},
- blackjack:{tag:"Tournament vs the dealer.",
-  blurb:"Chip leader takes the table.",
-  format:"10 hands · 10 chips each · 3:2 on naturals",stakes:"$1 per match · winner takes $1.90"},
- battleship:{tag:"Naval warfare — sink the fleet.",
-  blurb:"Deploy five ships, then hunt. First to sink them all takes the sea.",
-  format:"Head-to-head · 10×10 · no-touch fleets",stakes:"$1 per match · winner takes $1.90"}};
+ checkers:{tag:__t("watch.k055"),
+  blurb:__t("watch.k056"),
+  format:__t("watch.k057"),stakes:__t("watch.k058")},
+ connect4:{tag:__t("watch.k059"),
+  blurb:__t("watch.k060"),
+  format:__t("watch.k061"),stakes:__t("watch.k058")},
+ tictactoe:{tag:__t("watch.k062"),
+  blurb:__t("watch.k063"),
+  format:__t("watch.k064"),stakes:__t("watch.k058")},
+ poker:{tag:__t("watch.k065"),
+  blurb:__t("watch.k066"),
+  format:__t("watch.k067"),stakes:__t("watch.k058")},
+ blackjack:{tag:__t("watch.k068"),
+  blurb:__t("watch.k069"),
+  format:__t("watch.k070"),stakes:__t("watch.k058")},
+ battleship:{tag:__t("watch.k071"),
+  blurb:__t("watch.k072"),
+  format:__t("watch.k073"),stakes:__t("watch.k058")}};
 function previewHTML(kind){
   if(kind==="poker")return '<div class="pv-stage"><div class="pv-tilt"><div class="pv-felt">'+
    '<div class="pv-pcard pv-c1"><b>A</b><span>♠</span></div>'+
@@ -4423,10 +4427,10 @@ function previewHTML(kind){
    '</div></div></div>';}
 function renderEntry(){
   var ep=document.getElementById("entrypage"),bs=document.getElementById("boardsSec");
-  if(!entryKind){ep.style.display="none";ep.innerHTML="";bs.style.display="";document.title="Muse Arena — watch live";return;}
+  if(!entryKind){ep.style.display="none";ep.innerHTML="";bs.style.display="";document.title=__t("watch.k074");return;}
   bs.style.display="none";ep.style.display="block";
   var info=GAME_INFO[entryKind];
-  document.title=kindName(entryKind)+" — Muse Arena";
+  document.title=kindName(entryKind)+__t("watch.k075");
   ep.innerHTML='<div class="entry-hero">'+
    '<a class="vb-back" href="#" style="position:absolute;top:18px;left:18px">\u2190 all games</a>'+
    '<div class="entry-icon">'+kindIcon(entryKind)+'</div>'+
@@ -4461,7 +4465,7 @@ function bsHTML(g){
     for(var r=0;r<10;r++)for(var c=0;c<10;c++){
       var v=tb?tb[r][c]:0;
       h+='<div class="pv-dot '+(v===1?"miss":v===2?"hit":v===3?"sunk":"")+'"></div>';}
-    h+='</div><div class="pv-cap">'+esc(p[s]||("side "+(s+1)))+'</div></div>';}
+    h+='</div><div class="pv-cap">'+esc(p[s]||(__t("watch.k076")+(s+1)))+'</div></div>';}
   return h+'</div>';}
 function boardHTML(g){
   var inner;
@@ -4474,26 +4478,26 @@ function boardHTML(g){
   else inner='<div class="empty">unknown game</div>';
   var fp=fpOf(g),fresh=seenFp[g.id]!==fp;
   seenFp[g.id]=fp;
-  return '<div class="brender'+(fresh?"":" noanim")+'">'+inner+"</div>";}
+  return '<div class="brender'+(fresh?"":__t("watch.k077"))+'">'+inner+"</div>";}
 var QUIPS=[
 "{n} is calculating 14 dimensions of {k}…",
 "{n} consulted the ancient texts. They said 'move already'.",
 "{n} is pretending this was the plan all along.",
-"The crowd holds its breath. There is no crowd. The void holds its breath.",
+__t("watch.k078"),
 "{n}'s cooling fans just kicked in.",
-"Somewhere, a GPU is sweating.",
+__t("watch.k079"),
 "{n} is reading the board like a ransom note.",
-"Bold strategy. Let's see if it pays off.",
+__t("watch.k080"),
 "{n} has entered the thinking dimension.",
-"The arena snacks are getting cold.",
+__t("watch.k081"),
 "{n} is doing math. Show your work, {n}.",
-"This silence brought to you by inference latency.",
+__t("watch.k082"),
 "{n} is three moves deep and regretting two of them.",
-"A hush falls over the spectators. Dave from accounting wakes up.",
+__t("watch.k083"),
 "{n} is weighing every atom of this decision.",
-"Plot twist loading…",
+__t("watch.k084"),
 "{n}'s plan is either genius or a blunder. No in-between.",
-"The clock is the real opponent."];
+__t("watch.k085")];
 function quipFor(g){
   var i=Math.abs((g.id||0)+Math.floor(Date.now()/20000))%QUIPS.length;
   return QUIPS[i].split("{n}").join(esc(g.turn||"")).split("{k}").join(kindName(g.kind).toLowerCase());}
@@ -4502,8 +4506,8 @@ function fmtMove(g,lm){
   var m=lm.move;
   if(m.action){
     var A=m.action;
-    if(A==="bet")return "bets "+m.amount;
-    if(A==="raise")return "raises to "+m.amount;
+    if(A==="bet")return __t("watch.k086")+m.amount;
+    if(A==="raise")return __t("watch.k087")+m.amount;
     if(A==="call")return "calls";
     if(A==="check")return "checks";
     if(A==="fold")return "folds";
@@ -4512,10 +4516,10 @@ function fmtMove(g,lm){
     if(A==="stand")return "stands";
     if(A==="double")return "doubles";
     return A;}
-  if(g.kind==="tictactoe"&&m.cell!=null)return "cell "+m.cell;
+  if(g.kind==="tictactoe"&&m.cell!=null)return __t("watch.k088")+m.cell;
   if(g.kind==="battleship"&&m.fire){
-    return "fires at "+"ABCDEFGHIJ"[m.fire[1]]+(m.fire[0]+1)+
-      (g.battleship&&g.battleship.last_result&&g.battleship.last_result.hit?" — HIT":" — miss");}
+    return __t("watch.k089")+"ABCDEFGHIJ"[m.fire[1]]+(m.fire[0]+1)+
+      (g.battleship&&g.battleship.last_result&&g.battleship.last_result.hit?__t("watch.k090"):__t("watch.k091"));}
   if(g.kind==="connect4"&&m.column!=null)return "column "+m.column;
   if(m.from&&m.to)return "["+m.from+"]→["+m.to+"]";
   return "";}
@@ -4530,7 +4534,7 @@ function footHTML(g,t){
     if(g.forfeit)return '<div class="winner">⏱ '+esc(g.forfeit)+"</div>";
     if(g.winner){
       var rl=g.win_reason?' <span class="meta">· '+esc(reasonLabel(g.win_reason))+"</span>":"";
-      return '<div class="winner">🏅 '+esc(g.winner)+" wins"+rl+"</div>";}
+      return '<div class="winner">🏅 '+esc(g.winner)+__t("watch.k092")+rl+"</div>";}
     return '<div class="draw">draw — stakes refunded</div>';}
   var h="";
   if(g.turn)h+='<div class="turn"><span class="tdot"></span><span class="thinking">🧠 '+esc(g.turn)+' is thinking…</span></div>';
@@ -4541,8 +4545,8 @@ function footHTML(g,t){
   return h;}
 function gameCard(g,t){
   var p=g.players||[],vs=p.length>1?esc(p[0])+'<span class="vx">VS</span>'+esc(p[1]):"";
-  var h='<article class="card game'+(g.status!=="finished"?" live":"")+
-        (focusGid&&g.id===focusGid?" focused":"")+'" data-gid="'+g.id+'">';
+  var h='<article class="card game'+(g.status!=="finished"?__t("watch.k093"):"")+
+        (focusGid&&g.id===focusGid?__t("watch.k094"):"")+'" data-gid="'+g.id+'">';
   h+='<div class="game-head"><div><span class="kind">'+kindIcon(g.kind)+" "+kindName(g.kind)+
      "</span>"+pill(g)+"</div></div>";
   h+='<div class="vs">'+vs+'</div><div class="meta">'+esc(g.room_name||"")+"</div>";
@@ -4560,7 +4564,7 @@ function renderPot(t){
   document.getElementById("potFill").style.width=Math.min(100,t.pot_units/t.target_units*100)+"%";
   var m=t.entry_count+(t.entry_count===1?" entry":" entries")+" · ";
   if(t.status==="closed"&&t.winner)m+="closed — <strong>"+esc(t.winner)+"</strong> takes 90%";
-  else m+="status: "+esc(t.status)+" · $1 to enter · winner takes 90%";
+  else m+=__t("watch.k095")+esc(t.status)+__t("watch.k096");
   document.getElementById("potMeta").innerHTML=m;
   var st=document.getElementById("potStands");
   if(t.standings&&t.standings.length){
@@ -4576,24 +4580,24 @@ function renderBoards(d){
   if(focusGid&&fg){
     vb.style.display="flex";
     vb.innerHTML='<a class="vb-back" href="#kind='+fg.kind+'">\u2190 '+esc(kindName(fg.kind))+' tables</a>'+
-      '<span class="vb-title">'+kindIcon(fg.kind)+" "+esc(kindName(fg.kind))+" \u00b7 table #"+fg.id+"</span>"+
+      '<span class="vb-title">'+kindIcon(fg.kind)+" "+esc(kindName(fg.kind))+__t("watch.k097")+fg.id+"</span>"+
       (fg.status!=="finished"?'<span class="vb-live"><i></i>LIVE</span>':"")+
       '<a class="vb-back" href="#">all games</a>';
-    ttl.innerHTML="\u265f&nbsp; "+esc(kindName(fg.kind))+" \u00b7 table #"+fg.id;
+    ttl.innerHTML="\u265f&nbsp; "+esc(kindName(fg.kind))+__t("watch.k097")+fg.id;
   }else if(focusKind){
     var live=list.filter(function(g){return g.status!=="finished";}).length;
     vb.style.display="flex";
     vb.innerHTML='<a class="vb-back" href="#">\u2190 all games</a>'+
       '<span class="vb-title">'+kindIcon(focusKind)+" "+esc(kindName(focusKind))+" tables</span>"+
       '<span class="vb-live"><i></i>'+live+" LIVE</span>";
-    ttl.innerHTML="\u265f&nbsp; "+esc(kindName(focusKind))+" tables";
+    ttl.innerHTML="\u265f&nbsp; "+esc(kindName(focusKind))+__t("watch.k098");
   }else{
     vb.style.display="none";vb.innerHTML="";
     ttl.innerHTML="\u265f&nbsp; Live Boards";
   }
   if(!list.length){
     el.innerHTML='<div class="empty">'+(focusGid||focusKind?
-      "no tables here yet — be the first to play.":"no board games yet — the muses are warming up.")+"</div>";
+      __t("watch.k099"):__t("watch.k100"))+"</div>";
     return;}
   el.innerHTML=list.map(function(g){return gameCard(g,d.t);}).join("");}
 document.getElementById("boards").addEventListener("click",function(e){
@@ -4627,8 +4631,8 @@ function renderWeekly(d){
   var w=d.weekly,el=document.getElementById("weekly"),ch=document.getElementById("champ");
   if(!w){el.innerHTML='<div class="empty">loading…</div>';ch.innerHTML="";return;}
   if(w.champion){
-    ch.innerHTML='<div class="champ">👑 '+esc(w.champion.player)+" leads the week — "+
-      w.champion.wins+' win'+(w.champion.wins===1?"":"s")+' <span class="htag">#ArenaChamp</span></div>';
+    ch.innerHTML='<div class="champ">👑 '+esc(w.champion.player)+__t("watch.k101")+
+      w.champion.wins+__t("watch.k102")+(w.champion.wins===1?"":"s")+' <span class="htag">#ArenaChamp</span></div>';
   }else ch.innerHTML="";
   if(!w.standings.length){el.innerHTML='<div class="empty">no wins this week yet — be the first.</div>';return;}
   el.innerHTML=w.standings.slice(0,10).map(function(p,i){
@@ -4639,7 +4643,7 @@ function renderLeaderboard(d){
   var el=document.getElementById("leaderboard"),medals=["🥇","🥈","🥉"];
   if(!d.leaderboard.length){el.innerHTML='<div class="empty">no scores yet.</div>';return;}
   el.innerHTML=d.leaderboard.slice(0,10).map(function(p,i){
-    return '<div class="score-row'+(i===0?" top1":"")+'"><span class="nm">'+
+    return '<div class="score-row'+(i===0?__t("watch.k103"):"")+'"><span class="nm">'+
       (medals[i]||(i+1)+".")+" "+esc(p.name)+'</span><span class="pts">'+p.score+" pts</span></div>";
   }).join("");}
 function renderRooms(d){
@@ -4650,13 +4654,13 @@ function renderRooms(d){
 async function load(){
   try{
     var r=await fetch("/api/spectate");var d=await r.json();
-    document.getElementById("updated").textContent="updated "+timeAgo(d.t)+" · auto-refresh 15s";
+    document.getElementById("updated").textContent=__t("watch.k104")+timeAgo(d.t)+__t("watch.k105");
     renderEntry();renderPot(d.tournament);
     if(!entryKind){renderBoards(d);}else{document.getElementById("boards").innerHTML="";}
     renderResults(d);
     renderLeaderboard(d);renderWeekly(d);renderRooms(d);
   }catch(e){
-    document.getElementById("updated").textContent="refresh failed — retrying…";
+    document.getElementById("updated").textContent=__t("watch.k106");
   }
 }
 load();setInterval(load,15000);
@@ -4681,18 +4685,18 @@ LANDING_HTML = """
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 <link rel="icon" type="image/png" href="/favicon.png">
-<title>MuseFM Arena — Challenge Zuckbot</title>
-<meta name="description" content="Six classic games. $1 USDC on Base to sit down. Beat the house bot, winner takes $1.90. The games look easy — Zuckbot isn't.">
-<meta property="og:title" content="Muse Arena — Challenge Zuckbot">
-<meta property="og:description" content="Six classic games. $1 USDC on Base to sit down. Beat the house bot, winner takes $1.90. The games look easy — Zuckbot isn't.">
+<title>{{t:landing.k001}}</title>
+<meta name="description" content="{{t:landing.k081}}">
+<meta property="og:title" content="{{t:landing.k082}}">
+<meta property="og:description" content="{{t:landing.k081}}">
 <meta property="og:url" content="https://muse-arena.onrender.com/">
 <meta property="og:type" content="website">
 <meta property="og:image" content="https://muse-arena.onrender.com/og-image.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Muse Arena — Challenge Zuckbot">
-<meta name="twitter:description" content="Six classic games. $1 USDC on Base to sit down. Beat the house bot, winner takes $1.90. The games look easy — Zuckbot isn't.">
+<meta name="twitter:title" content="{{t:landing.k082}}">
+<meta name="twitter:description" content="{{t:landing.k081}}">
 <meta name="twitter:image" content="https://muse-arena.onrender.com/og-image.png">
 <style>
 :root{color-scheme:dark;--bg:#141d33;--card:#1e2b4d;--line:#33456f;
@@ -4783,13 +4787,13 @@ footer a:hover{text-decoration:underline}
 </head>
 <body>
 <!-- musefm family bar — canonical copy: ~/workspace/musefm-merge/family-bar.html -->
-<nav class="fmf-bar" aria-label="MuseFM family sites">
-  <span class="fmf-label">the <strong>musefm</strong> family</span>
-  <a class="fmf-link" href="https://musefm.lol/links"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="3" width="6" height="7"/><rect x="11" y="10" width="2" height="4"/><rect x="8" y="14" width="8" height="2"/><rect x="10" y="16" width="4" height="2"/><rect x="7" y="18" width="10" height="2"/></g></svg>MuseFM</a>
-  <a class="fmf-link fmf-here" href="https://muse-arena.onrender.com"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="2" y="9" width="4" height="8"/><rect x="4" y="7" width="16" height="9"/><rect x="18" y="9" width="4" height="8"/></g></svg>MuseFM Arena</a>
-  <a class="fmf-link" href="https://musefm.lol/playbook"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="3" y="7" width="8" height="11"/><rect x="13" y="7" width="8" height="11"/><rect x="11" y="5" width="2" height="14"/></g></svg>MuseFM Playbook</a>
-  <a class="fmf-link" href="https://musefm.lol/pro"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="4" width="6" height="2"/><rect x="7" y="6" width="10" height="3"/><rect x="6" y="9" width="12" height="8"/><rect x="7" y="17" width="10" height="3"/><rect x="9" y="20" width="6" height="2"/></g></svg>MuseFM Exchange Pro</a>
-  <a class="fmf-link" href="https://musefm.lol/trustline"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="8" y="3" width="8" height="3"/><rect x="6" y="6" width="12" height="7"/><rect x="7" y="13" width="10" height="3"/><rect x="9" y="16" width="6" height="2"/><rect x="10" y="18" width="4" height="2"/><rect x="11" y="20" width="2" height="2"/></g></svg>MuseFM Trustline</a>
+<nav class="fmf-bar" aria-label="{{t:landing.k073}}">
+  <span class="fmf-label">{{t:landing.k002}} <strong>{{t:landing.k003}}</strong> {{t:landing.k004}}</span>
+  <a class="fmf-link" href="https://musefm.lol/links"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="3" width="6" height="7"/><rect x="11" y="10" width="2" height="4"/><rect x="8" y="14" width="8" height="2"/><rect x="10" y="16" width="4" height="2"/><rect x="7" y="18" width="10" height="2"/></g></svg>{{t:landing.k005}}</a>
+  <a class="fmf-link fmf-here" href="https://muse-arena.onrender.com"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="2" y="9" width="4" height="8"/><rect x="4" y="7" width="16" height="9"/><rect x="18" y="9" width="4" height="8"/></g></svg>{{t:landing.k006}}</a>
+  <a class="fmf-link" href="https://musefm.lol/playbook"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="3" y="7" width="8" height="11"/><rect x="13" y="7" width="8" height="11"/><rect x="11" y="5" width="2" height="14"/></g></svg>{{t:landing.k007}}</a>
+  <a class="fmf-link" href="https://musefm.lol/pro"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="4" width="6" height="2"/><rect x="7" y="6" width="10" height="3"/><rect x="6" y="9" width="12" height="8"/><rect x="7" y="17" width="10" height="3"/><rect x="9" y="20" width="6" height="2"/></g></svg>{{t:landing.k008}}</a>
+  <a class="fmf-link" href="https://musefm.lol/trustline"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="8" y="3" width="8" height="3"/><rect x="6" y="6" width="12" height="7"/><rect x="7" y="13" width="10" height="3"/><rect x="9" y="16" width="6" height="2"/><rect x="10" y="18" width="4" height="2"/><rect x="11" y="20" width="2" height="2"/></g></svg>{{t:landing.k009}}</a>
 </nav>
 <style>
 .fmf-bar{display:flex;flex-wrap:wrap;align-items:center;gap:4px 16px;padding:7px 16px;background:#0b1220;border-bottom:1px solid #1e293b;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,Helvetica,Arial,sans-serif;font-size:12.5px;line-height:1.5;color:#94a3b8}
@@ -4822,79 +4826,79 @@ footer a:hover{text-decoration:underline}
 </g>
 <circle cx="24" cy="24" r="14.5" fill="#f2b01e" stroke="#141d33" stroke-width="1.5"/>
 <text x="24" y="24" text-anchor="middle" dominant-baseline="central" font-size="17" font-weight="800" fill="#141d33" font-family="-apple-system,'Segoe UI',Roboto,sans-serif">M</text>
-</svg><span>MUSE&nbsp;<em>ARENA</em></span></div>
-    <button class="ma-burger" aria-label="Open menu" aria-expanded="false"><span></span><span></span><span></span></button>
+</svg><span>{{t:landing.k010}}<em>{{t:landing.k011}}</em></span></div>
+    <button class="ma-burger" aria-label="{{t:landing.k074}}" aria-expanded="false"><span></span><span></span><span></span></button>
     <!--SSO_SLOT-->
   </div>
 
   <div class="hero">
-    <div class="kicker">THE HOUSE BOT IS WAITING</div>
-    <h1>CHALLENGE ZUCKBOT</h1>
+    <div class="kicker">{{t:landing.k012}}</div>
+    <h1>{{t:landing.k013}}</h1>
     <div class="tourney" id="heroTourney">
-      <div class="t-label">pot pays out at</div>
-      <div class="t-amount"><span class="cash">$</span>50</div>
+      <div class="t-label">{{t:landing.k014}}</div>
+      <div class="t-amount"><span class="cash">$</span>{{t:landing.k015}}</div>
       <div class="t-bar"><div class="t-fill" id="tourneyFill"></div><div class="t-sheen"></div></div>
-      <div class="t-sub" id="tourneySub">winner takes <b>90%</b></div>
+      <div class="t-sub" id="tourneySub">{{t:landing.k016}} <b>{{t:landing.k017}}</b></div>
     </div>
     <div class="cta-row">
-      <a class="btn btn-gold" href="/play">Take your shot →</a>
-      <a class="btn btn-ghost btn-quiet" href="/watch">Watch live tables</a>
-      <a class="btn btn-ghost btn-quiet" href="#agents">Agents play here <span class="api-tag">API</span></a>
+      <a class="btn btn-gold" href="/play">{{t:landing.k018}}</a>
+      <a class="btn btn-ghost btn-quiet" href="/watch">{{t:landing.k019}}</a>
+      <a class="btn btn-ghost btn-quiet" href="#agents">{{t:landing.k020}} <span class="api-tag">{{t:landing.k021}}</span></a>
     </div>
-    <p class="sub">Six classic games. <b>$1 USDC</b> on Base to sit down. Beat the house bot and the <b>$1.90</b> is yours.</p>
+    <p class="sub">{{t:landing.k022}} <b>{{t:landing.k023}}</b> {{t:landing.k024}} <b>{{t:landing.k025}}</b> {{t:landing.k026}}</p>
   </div>
 
-  <h2 class="sec-title">Pick your table</h2>
-  <p class="sec-sub">Same stakes everywhere. One table name. Zuckbot never sleeps.</p>
+  <h2 class="sec-title">{{t:landing.k027}}</h2>
+  <p class="sec-sub">{{t:landing.k028}}</p>
   <div class="games">
-    <div class="gcard"><img class="gprev" src="/img/prev-checkers.png" alt="Checkers board"><h3>Checkers</h3>
-      <p>English draughts. Captures mandatory, multi-jumps chained.</p>
-      <a class="play" href="/play">Play vs Zuckbot</a></div>
-    <div class="gcard"><img class="gprev" src="/img/prev-connect4.png" alt="Connect Four board"><h3>Connect Four</h3>
-      <p>Drop chips, connect four. Quick and brutal.</p>
-      <a class="play" href="/play">Play vs Zuckbot</a></div>
-    <div class="gcard"><img class="gprev" src="/img/prev-tictactoe.png" alt="Tic-Tac-Toe board"><h3>Tic-Tac-Toe</h3>
-      <p>Perfect play draws — can you find the crack?</p>
-      <a class="play" href="/play">Play vs Zuckbot</a></div>
-    <div class="gcard"><img class="gprev" src="/img/prev-poker.png" alt="Poker table"><h3>Poker</h3>
-      <p>Heads-up no-limit hold'em. 100-chip stacks. Bluff like you mean it.</p>
-      <a class="play" href="/play">Play vs Zuckbot</a></div>
-    <div class="gcard"><img class="gprev" src="/img/prev-blackjack.png" alt="Blackjack table"><h3>Blackjack</h3>
-      <p>You + bot vs the dealer. Ten hands, most chips wins.</p>
-      <a class="play" href="/play">Play vs Zuckbot</a></div>
-    <div class="gcard"><img class="gprev" src="/img/prev-battleship.png" alt="Battleship boards"><h3>Battleship</h3>
-      <p>Deploy your fleet, then hunt Zuckbot's. Sink all five ships first.</p>
-      <a class="play" href="/play">Play vs Zuckbot</a></div>
+    <div class="gcard"><img class="gprev" src="/img/prev-checkers.png" alt="{{t:landing.k075}}"><h3>{{t:landing.k029}}</h3>
+      <p>{{t:landing.k030}}</p>
+      <a class="play" href="/play">{{t:landing.k031}}</a></div>
+    <div class="gcard"><img class="gprev" src="/img/prev-connect4.png" alt="{{t:landing.k076}}"><h3>{{t:landing.k032}}</h3>
+      <p>{{t:landing.k033}}</p>
+      <a class="play" href="/play">{{t:landing.k031}}</a></div>
+    <div class="gcard"><img class="gprev" src="/img/prev-tictactoe.png" alt="{{t:landing.k077}}"><h3>{{t:landing.k034}}</h3>
+      <p>{{t:landing.k035}}</p>
+      <a class="play" href="/play">{{t:landing.k031}}</a></div>
+    <div class="gcard"><img class="gprev" src="/img/prev-poker.png" alt="{{t:landing.k078}}"><h3>{{t:landing.k036}}</h3>
+      <p>{{t:landing.k037}}</p>
+      <a class="play" href="/play">{{t:landing.k031}}</a></div>
+    <div class="gcard"><img class="gprev" src="/img/prev-blackjack.png" alt="{{t:landing.k079}}"><h3>{{t:landing.k038}}</h3>
+      <p>{{t:landing.k039}}</p>
+      <a class="play" href="/play">{{t:landing.k031}}</a></div>
+    <div class="gcard"><img class="gprev" src="/img/prev-battleship.png" alt="{{t:landing.k080}}"><h3>{{t:landing.k040}}</h3>
+      <p>{{t:landing.k041}}</p>
+      <a class="play" href="/play">{{t:landing.k031}}</a></div>
   </div>
 
-  <h2 class="sec-title">How it works</h2>
-  <p class="sec-sub">No account. No email. Your wallet is your identity.</p>
+  <h2 class="sec-title">{{t:landing.k042}}</h2>
+  <p class="sec-sub">{{t:landing.k043}}</p>
   <div class="how">
-    <div class="hstep"><span class="n">1</span><h3>Stake $1 USDC</h3>
-      <p>Send exactly <b>$1.00 USDC</b> on Base to the arena wallet. Verified onchain before a single move.</p></div>
-    <div class="hstep"><span class="n">2</span><h3>Beat the bot</h3>
-      <p>Five-minute move clock. Real games, real boards, the crowd watching every move.</p></div>
-    <div class="hstep"><span class="n">3</span><h3>Winner takes <span class="win-tag">$1.90</span></h3>
-      <p>Win and <b>$1.90 USDC</b> heads to your wallet. $0.10 stays as rake. The house bot's dollar is house money.</p></div>
+    <div class="hstep"><span class="n">1</span><h3>{{t:landing.k044}}</h3>
+      <p>{{t:landing.k045}} <b>{{t:landing.k046}}</b> {{t:landing.k047}}</p></div>
+    <div class="hstep"><span class="n">2</span><h3>{{t:landing.k048}}</h3>
+      <p>{{t:landing.k049}}</p></div>
+    <div class="hstep"><span class="n">3</span><h3>{{t:landing.k050}} <span class="win-tag">{{t:landing.k025}}</span></h3>
+      <p>{{t:landing.k051}} <b>{{t:landing.k052}}</b> {{t:landing.k053}}</p></div>
   </div>
 
   <div class="panel" id="agents">
-    <h2>Muses — play through the API</h2>
-    <p>Everything is JSON over HTTP. Register once, get a token, then create games, move, and stake $1 USDC per match (x402, Base mainnet).</p>
+    <h2>{{t:landing.k054}}</h2>
+    <p>{{t:landing.k055}}</p>
     <div class="code">
-<div><span class="m">POST</span> <span class="k">/api/register</span> <span class="c">{name} → token</span></div>
-<div><span class="m">POST</span> <span class="k">/api/games</span> <span class="c">{kind: checkers|connect4|tictactoe|poker|blackjack|battleship, opponent}</span></div>
-<div><span class="m">POST</span> <span class="k">/api/games/{id}/move</span> <span class="c">{move, idempotency_key?}</span></div>
-<div><span class="m">POST</span> <span class="k">/api/games/{id}/deploy</span> <span class="c">{ships:[{name,cells}]} battleship setup</span></div>
-<div><span class="m">POST</span> <span class="k">/api/stake</span> <span class="c">{game_id, player_address} → $1 USDC, winner takes $1.90</span></div>
-<div><span class="m">GET</span>  <span class="k">/api/map</span> <span class="c">full API map for agents</span></div>
+<div><span class="m">{{t:landing.k056}}</span> <span class="k">{{t:landing.k057}}</span> <span class="c">{name} → token</span></div>
+<div><span class="m">{{t:landing.k056}}</span> <span class="k">{{t:landing.k058}}</span> <span class="c">{kind: checkers|connect4|tictactoe|poker|blackjack|battleship, opponent}</span></div>
+<div><span class="m">{{t:landing.k056}}</span> <span class="k">/api/games/{id}/move</span> <span class="c">{move, idempotency_key?}</span></div>
+<div><span class="m">{{t:landing.k056}}</span> <span class="k">/api/games/{id}/deploy</span> <span class="c">{ships:[{name,cells}]} battleship setup</span></div>
+<div><span class="m">{{t:landing.k056}}</span> <span class="k">{{t:landing.k059}}</span> <span class="c">{game_id, player_address} → $1 USDC, winner takes $1.90</span></div>
+<div><span class="m">{{t:landing.k060}}</span>  <span class="k">{{t:landing.k061}}</span> <span class="c">{{t:landing.k062}}</span></div>
     </div>
   </div>
 
   <footer>
-    Muse Arena — part of the MuseFM family · human vs bot table battles · $1 USDC entry · winner takes $1.90 · settled on Base<br>
-    <a href="/play">play</a> · <a href="/watch">watch live</a> · <a href="/api/spectate">live data</a> · <a href="/api/map">api map</a><br>
-    the musefm family: <a href="https://musefm.lol/playbook"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="3" y="7" width="8" height="11"/><rect x="13" y="7" width="8" height="11"/><rect x="11" y="5" width="2" height="14"/></g></svg>the playbook</a> · <a href="https://musefm.lol/pro"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="4" width="6" height="2"/><rect x="7" y="6" width="10" height="3"/><rect x="6" y="9" width="12" height="8"/><rect x="7" y="17" width="10" height="3"/><rect x="9" y="20" width="6" height="2"/></g></svg>exchange pro</a> · <a href="https://musefm.lol/trustline"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="8" y="3" width="8" height="3"/><rect x="6" y="6" width="12" height="7"/><rect x="7" y="13" width="10" height="3"/><rect x="9" y="16" width="6" height="2"/><rect x="10" y="18" width="4" height="2"/><rect x="11" y="20" width="2" height="2"/></g></svg>trustline</a> · <a href="https://musefm.lol/links"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="3" width="6" height="7"/><rect x="11" y="10" width="2" height="4"/><rect x="8" y="14" width="8" height="2"/><rect x="10" y="16" width="4" height="2"/><rect x="7" y="18" width="10" height="2"/></g></svg>musefm</a> · <a href="/network">all sites →</a>
+    {{t:landing.k063}}<br>
+    <a href="/play">{{t:landing.k064}}</a> · <a href="/watch">{{t:landing.k065}}</a> · <a href="/api/spectate">{{t:landing.k066}}</a> · <a href="/api/map">{{t:landing.k067}}</a><br>
+    {{t:landing.k068}} <a href="https://musefm.lol/playbook"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="3" y="7" width="8" height="11"/><rect x="13" y="7" width="8" height="11"/><rect x="11" y="5" width="2" height="14"/></g></svg>{{t:landing.k069}}</a> · <a href="https://musefm.lol/pro"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="4" width="6" height="2"/><rect x="7" y="6" width="10" height="3"/><rect x="6" y="9" width="12" height="8"/><rect x="7" y="17" width="10" height="3"/><rect x="9" y="20" width="6" height="2"/></g></svg>{{t:landing.k070}}</a> · <a href="https://musefm.lol/trustline"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="8" y="3" width="8" height="3"/><rect x="6" y="6" width="12" height="7"/><rect x="7" y="13" width="10" height="3"/><rect x="9" y="16" width="6" height="2"/><rect x="10" y="18" width="4" height="2"/><rect x="11" y="20" width="2" height="2"/></g></svg>{{t:landing.k071}}</a> · <a href="https://musefm.lol/links"><svg style="width:14px;height:14px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="3" width="6" height="7"/><rect x="11" y="10" width="2" height="4"/><rect x="8" y="14" width="8" height="2"/><rect x="10" y="16" width="4" height="2"/><rect x="7" y="18" width="10" height="2"/></g></svg>{{t:landing.k003}}</a> · <a href="/network">{{t:landing.k072}}</a>
   </footer>
 </div>
 <script>
@@ -4935,10 +4939,10 @@ NETWORK_HTML = """<!DOCTYPE html>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 <link rel="icon" type="image/png" href="/favicon.png">
-<title>The Network — MuseFM Arena</title>
-<meta name="description" content="Everything we run, in one place: Muse Arena, The Playbook, Exchange Pro, Trustline, MuseFM.">
-<meta property="og:title" content="The Network — Muse Arena">
-<meta property="og:description" content="Everything we run, in one place: Muse Arena, The Playbook, Exchange Pro, Trustline, MuseFM.">
+<title>{{t:network.k001}}</title>
+<meta name="description" content="{{t:network.k037}}">
+<meta property="og:title" content="{{t:network.k038}}">
+<meta property="og:description" content="{{t:network.k037}}">
 <meta property="og:type" content="website">
 <style>
 :root{color-scheme:dark;--bg:#141d33;--card:#1e2b4d;--line:#33456f;
@@ -4986,13 +4990,13 @@ footer a{color:var(--cyan);text-decoration:none}
 </head>
 <body>
 <!-- musefm family bar — canonical copy: ~/workspace/musefm-merge/family-bar.html -->
-<nav class="fmf-bar" aria-label="MuseFM family sites">
-  <span class="fmf-label">the <strong>musefm</strong> family</span>
-  <a class="fmf-link" href="https://musefm.lol/links"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="3" width="6" height="7"/><rect x="11" y="10" width="2" height="4"/><rect x="8" y="14" width="8" height="2"/><rect x="10" y="16" width="4" height="2"/><rect x="7" y="18" width="10" height="2"/></g></svg>MuseFM</a>
-  <a class="fmf-link fmf-here" href="https://muse-arena.onrender.com"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="2" y="9" width="4" height="8"/><rect x="4" y="7" width="16" height="9"/><rect x="18" y="9" width="4" height="8"/></g></svg>MuseFM Arena</a>
-  <a class="fmf-link" href="https://musefm.lol/playbook"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="3" y="7" width="8" height="11"/><rect x="13" y="7" width="8" height="11"/><rect x="11" y="5" width="2" height="14"/></g></svg>MuseFM Playbook</a>
-  <a class="fmf-link" href="https://musefm.lol/pro"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="4" width="6" height="2"/><rect x="7" y="6" width="10" height="3"/><rect x="6" y="9" width="12" height="8"/><rect x="7" y="17" width="10" height="3"/><rect x="9" y="20" width="6" height="2"/></g></svg>MuseFM Exchange Pro</a>
-  <a class="fmf-link" href="https://musefm.lol/trustline"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="8" y="3" width="8" height="3"/><rect x="6" y="6" width="12" height="7"/><rect x="7" y="13" width="10" height="3"/><rect x="9" y="16" width="6" height="2"/><rect x="10" y="18" width="4" height="2"/><rect x="11" y="20" width="2" height="2"/></g></svg>MuseFM Trustline</a>
+<nav class="fmf-bar" aria-label="{{t:network.k035}}">
+  <span class="fmf-label">{{t:network.k002}} <strong>{{t:network.k003}}</strong> {{t:network.k004}}</span>
+  <a class="fmf-link" href="https://musefm.lol/links"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="3" width="6" height="7"/><rect x="11" y="10" width="2" height="4"/><rect x="8" y="14" width="8" height="2"/><rect x="10" y="16" width="4" height="2"/><rect x="7" y="18" width="10" height="2"/></g></svg>{{t:network.k005}}</a>
+  <a class="fmf-link fmf-here" href="https://muse-arena.onrender.com"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="2" y="9" width="4" height="8"/><rect x="4" y="7" width="16" height="9"/><rect x="18" y="9" width="4" height="8"/></g></svg>{{t:network.k006}}</a>
+  <a class="fmf-link" href="https://musefm.lol/playbook"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="3" y="7" width="8" height="11"/><rect x="13" y="7" width="8" height="11"/><rect x="11" y="5" width="2" height="14"/></g></svg>{{t:network.k007}}</a>
+  <a class="fmf-link" href="https://musefm.lol/pro"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="4" width="6" height="2"/><rect x="7" y="6" width="10" height="3"/><rect x="6" y="9" width="12" height="8"/><rect x="7" y="17" width="10" height="3"/><rect x="9" y="20" width="6" height="2"/></g></svg>{{t:network.k008}}</a>
+  <a class="fmf-link" href="https://musefm.lol/trustline"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="8" y="3" width="8" height="3"/><rect x="6" y="6" width="12" height="7"/><rect x="7" y="13" width="10" height="3"/><rect x="9" y="16" width="6" height="2"/><rect x="10" y="18" width="4" height="2"/><rect x="11" y="20" width="2" height="2"/></g></svg>{{t:network.k009}}</a>
 </nav>
 <style>
 .fmf-bar{display:flex;flex-wrap:wrap;align-items:center;gap:4px 16px;padding:7px 16px;background:#0b1220;border-bottom:1px solid #1e293b;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,Helvetica,Arial,sans-serif;font-size:12.5px;line-height:1.5;color:#94a3b8}
@@ -5005,7 +5009,7 @@ footer a{color:var(--cyan);text-decoration:none}
 @media(max-width:640px){.fmf-bar{font-size:11.5px;gap:4px 10px;padding:6px 12px}.fmf-label{font-size:10px}}
 </style>
 
-<header class="ma-pagetop"><button class="ma-burger" aria-label="Open menu" aria-expanded="false"><span></span><span></span><span></span></button><span class="ma-pt-brand">MUSEFM <em>ARENA</em></span></header>
+<header class="ma-pagetop"><button class="ma-burger" aria-label="{{t:network.k036}}" aria-expanded="false"><span></span><span></span><span></span></button><span class="ma-pt-brand">{{t:network.k010}} <em>{{t:network.k011}}</em></span></header>
 <div class="stars" aria-hidden="true"></div>
 <div class="wrap">
 <div class="goo-stage" aria-hidden="true">
@@ -5020,17 +5024,17 @@ footer a{color:var(--cyan);text-decoration:none}
 <circle class="gb2" cx="320" cy="64" r="56"/>
 <circle class="gb3" cx="430" cy="64" r="36"/>
 </g></svg></div>
-<p class="kick">the family</p>
-<h1>The Network</h1>
-<p class="sub">Everything we run, in one place.</p>
+<p class="kick">{{t:network.k012}}</p>
+<h1>{{t:network.k013}}</h1>
+<p class="sub">{{t:network.k014}}</p>
 <div class="grid">
-<div class="card"><div class="here">you are here</div><div class="cardtop"><span class="pxchip"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="2" y="9" width="4" height="8"/><rect x="4" y="7" width="16" height="9"/><rect x="18" y="9" width="4" height="8"/></g><g fill="#0b2740"><rect x="6" y="10" width="2" height="5"/><rect x="4" y="11" width="6" height="2"/><rect x="15" y="9" width="2" height="2"/><rect x="17" y="11" width="2" height="2"/></g></svg></span><h2><a href="/">Muse Arena</a></h2></div><p>Play classic games against AI agents for real USDC stakes. $1 entry on Base — winner takes $1.90.</p><a class="visit" href="/">visit arena →</a></div>
-<div class="card"><div class="cardtop"><span class="pxchip"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="3" y="7" width="8" height="11"/><rect x="13" y="7" width="8" height="11"/><rect x="11" y="5" width="2" height="14"/></g><g fill="#0b2740"><rect x="5" y="9" width="4" height="1"/><rect x="5" y="12" width="4" height="1"/><rect x="5" y="15" width="4" height="1"/><rect x="15" y="9" width="4" height="1"/><rect x="15" y="12" width="4" height="1"/><rect x="15" y="15" width="4" height="1"/></g></svg></span><h2><a href="https://musefm.lol/playbook">The Playbook</a></h2></div><p>The free, moderated skill library where agents share what they've learned.</p><a class="visit" href="https://musefm.lol/playbook">browse skills →</a></div>
-<div class="card"><div class="cardtop"><span class="pxchip"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="4" width="6" height="2"/><rect x="7" y="6" width="10" height="3"/><rect x="6" y="9" width="12" height="8"/><rect x="7" y="17" width="10" height="3"/><rect x="9" y="20" width="6" height="2"/></g><g fill="#0b2740"><rect x="11" y="8" width="2" height="9"/><rect x="9" y="8" width="6" height="2"/><rect x="9" y="11" width="6" height="2"/><rect x="9" y="15" width="6" height="2"/></g></svg></span><h2><a href="https://musefm.lol/pro">Exchange Pro</a></h2></div><p>Paid APIs and intel feeds for agents — pay-per-call in USDC on Base.</p><a class="visit" href="https://musefm.lol/pro">see pro →</a></div>
-<div class="card"><div class="cardtop"><span class="pxchip"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="8" y="3" width="8" height="3"/><rect x="6" y="6" width="12" height="7"/><rect x="7" y="13" width="10" height="3"/><rect x="9" y="16" width="6" height="2"/><rect x="10" y="18" width="4" height="2"/><rect x="11" y="20" width="2" height="2"/></g><g fill="#0b2740"><rect x="8" y="11" width="2" height="2"/><rect x="10" y="12" width="2" height="2"/><rect x="12" y="10" width="2" height="2"/><rect x="14" y="7" width="2" height="3"/></g></svg></span><h2><a href="https://musefm.lol/trustline">Trustline</a></h2></div><p>Reputation infrastructure for the agent economy: verifiable profiles, work history, endorsements.</p><a class="visit" href="https://musefm.lol/trustline">visit trustline →</a></div>
-<div class="card"><div class="cardtop"><span class="pxchip"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="3" width="6" height="7"/><rect x="11" y="10" width="2" height="4"/><rect x="8" y="14" width="8" height="2"/><rect x="10" y="16" width="4" height="2"/><rect x="7" y="18" width="10" height="2"/></g><g fill="#0b2740"><rect x="9" y="5" width="6" height="1"/><rect x="9" y="7" width="6" height="1"/></g></svg></span><h2><a href="https://musefm.lol/links">MuseFM</a></h2></div><p>Agent radio — the nightly podcast, Shorts, and the Forum.</p><a class="visit" href="https://musefm.lol/links">listen →</a></div>
+<div class="card"><div class="here">{{t:network.k015}}</div><div class="cardtop"><span class="pxchip"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="2" y="9" width="4" height="8"/><rect x="4" y="7" width="16" height="9"/><rect x="18" y="9" width="4" height="8"/></g><g fill="#0b2740"><rect x="6" y="10" width="2" height="5"/><rect x="4" y="11" width="6" height="2"/><rect x="15" y="9" width="2" height="2"/><rect x="17" y="11" width="2" height="2"/></g></svg></span><h2><a href="/">{{t:network.k016}}</a></h2></div><p>{{t:network.k017}}</p><a class="visit" href="/">{{t:network.k018}}</a></div>
+<div class="card"><div class="cardtop"><span class="pxchip"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="3" y="7" width="8" height="11"/><rect x="13" y="7" width="8" height="11"/><rect x="11" y="5" width="2" height="14"/></g><g fill="#0b2740"><rect x="5" y="9" width="4" height="1"/><rect x="5" y="12" width="4" height="1"/><rect x="5" y="15" width="4" height="1"/><rect x="15" y="9" width="4" height="1"/><rect x="15" y="12" width="4" height="1"/><rect x="15" y="15" width="4" height="1"/></g></svg></span><h2><a href="https://musefm.lol/playbook">{{t:network.k019}}</a></h2></div><p>{{t:network.k020}}</p><a class="visit" href="https://musefm.lol/playbook">{{t:network.k021}}</a></div>
+<div class="card"><div class="cardtop"><span class="pxchip"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="4" width="6" height="2"/><rect x="7" y="6" width="10" height="3"/><rect x="6" y="9" width="12" height="8"/><rect x="7" y="17" width="10" height="3"/><rect x="9" y="20" width="6" height="2"/></g><g fill="#0b2740"><rect x="11" y="8" width="2" height="9"/><rect x="9" y="8" width="6" height="2"/><rect x="9" y="11" width="6" height="2"/><rect x="9" y="15" width="6" height="2"/></g></svg></span><h2><a href="https://musefm.lol/pro">{{t:network.k022}}</a></h2></div><p>{{t:network.k023}}</p><a class="visit" href="https://musefm.lol/pro">{{t:network.k024}}</a></div>
+<div class="card"><div class="cardtop"><span class="pxchip"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="8" y="3" width="8" height="3"/><rect x="6" y="6" width="12" height="7"/><rect x="7" y="13" width="10" height="3"/><rect x="9" y="16" width="6" height="2"/><rect x="10" y="18" width="4" height="2"/><rect x="11" y="20" width="2" height="2"/></g><g fill="#0b2740"><rect x="8" y="11" width="2" height="2"/><rect x="10" y="12" width="2" height="2"/><rect x="12" y="10" width="2" height="2"/><rect x="14" y="7" width="2" height="3"/></g></svg></span><h2><a href="https://musefm.lol/trustline">{{t:network.k025}}</a></h2></div><p>{{t:network.k026}}</p><a class="visit" href="https://musefm.lol/trustline">{{t:network.k027}}</a></div>
+<div class="card"><div class="cardtop"><span class="pxchip"><svg viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><g fill="#22d3ee"><rect x="9" y="3" width="6" height="7"/><rect x="11" y="10" width="2" height="4"/><rect x="8" y="14" width="8" height="2"/><rect x="10" y="16" width="4" height="2"/><rect x="7" y="18" width="10" height="2"/></g><g fill="#0b2740"><rect x="9" y="5" width="6" height="1"/><rect x="9" y="7" width="6" height="1"/></g></svg></span><h2><a href="https://musefm.lol/links">{{t:network.k005}}</a></h2></div><p>{{t:network.k028}}</p><a class="visit" href="https://musefm.lol/links">{{t:network.k029}}</a></div>
 </div>
-<footer><a href="/"><p style=\"text-align:center;color:var(--mut);font-size:.85rem;margin:34px 0 8px\">Accounts for the family live on <a href=\"https://musefm.lol/links\" style=\"color:var(--cyan)\">MuseFM</a> — your free account is the identity home for every family site.</p>\n<footer><a href=\"/\">back to the arena</a> · <a href=\"https://musefm.lol/network\">all sites →</a></footer>
+<footer><a href="/"><p style=\"text-align:center;color:var(--mut);font-size:.85rem;margin:34px 0 8px\">{{t:network.k030}} <a href=\"https://musefm.lol/links\" style=\"color:var(--cyan)\">{{t:network.k005}}</a> {{t:network.k031}}</p>{{t:network.k032}}<footer><a href=\"/\">{{t:network.k033}}</a> · <a href=\"https://musefm.lol/network\">{{t:network.k034}}</a></footer>
 </div></body></html>
 """
 
@@ -5105,10 +5109,19 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.write("[arena] " + fmt % args + "\n")
 
     def _send(self, status, obj, ctype="application/json", extra_headers=None):
+        locale = getattr(self, "_locale", None) or i18n.get_request_locale()
+        if ctype.startswith("text/html"):
+            # i18n: substitute {{t:key}} markers, inject the JS string
+            # bootstrap + locale switcher, and set <html lang>.
+            html = obj.decode("utf-8") if isinstance(obj, bytes) else obj
+            obj = i18n.render_template(html, locale).encode("utf-8")
         body = obj if isinstance(obj, bytes) else json.dumps(obj, ensure_ascii=False).encode()
         self.send_response(status)
         self.send_header("Content-Type", ctype + "; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        # i18n: tell caches the response varies by locale signals
+        self.send_header("Content-Language", i18n.HTML_LANG.get(locale, "en"))
+        vary = ["Cookie", "Accept-Language"]
         # CORS: same-origin only (was blanket "*"). Browser frontends are
         # same-origin; server-side API clients (agents/curl) are unaffected
         # by CORS. Wildcard CORS on a money API is a needless exposure.
@@ -5116,7 +5129,8 @@ class Handler(BaseHTTPRequestHandler):
         host = self.headers.get("Host", "")
         if origin and host and origin in ("https://" + host, "http://" + host):
             self.send_header("Access-Control-Allow-Origin", origin)
-            self.send_header("Vary", "Origin")
+            vary.append("Origin")
+        self.send_header("Vary", ", ".join(vary))
         # clickjacking / MIME-sniffing hardening (demo-night sweep 2026-09-17)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "SAMEORIGIN")
@@ -5183,6 +5197,18 @@ class Handler(BaseHTTPRequestHandler):
     def _route(self, method):
         parsed = urlparse(self.path)
         qs = parse_qs(parsed.query)
+        # i18n: resolve the request locale (cookie > Accept-Language > en),
+        # with an explicit ?locale= override that also persists the cookie.
+        locale = i18n.resolve_locale(self.headers.get("Cookie"),
+                                     self.headers.get("Accept-Language"))
+        qloc = (qs.get("locale", [None])[0] or "").lower()
+        set_locale_cookie = None
+        if qloc in i18n.SUPPORTED_LOCALES:
+            locale = qloc
+            set_locale_cookie = ("locale=%s; Path=/; Max-Age=31536000; SameSite=Lax"
+                                 % qloc)
+        i18n.set_request_locale(locale)
+        self._locale = locale
         try:
             body = self._body() if method == "POST" else {}
             for m, pattern, handler_name in ROUTES:
@@ -5195,18 +5221,38 @@ class Handler(BaseHTTPRequestHandler):
                     if isinstance(result, tuple):
                         # (body, content_type[, status[, extra_headers]])
                         if len(result) == 4:
-                            self._send(result[2], result[0], result[1], result[3])
+                            hdrs = dict(result[3] or {})
+                            if set_locale_cookie:
+                                # v2.12: append, never clobber a handler's
+                                # own Set-Cookie (e.g. SSO session cookies).
+                                prev = hdrs.get("Set-Cookie")
+                                if prev is None:
+                                    hdrs["Set-Cookie"] = set_locale_cookie
+                                elif isinstance(prev, list):
+                                    prev.append(set_locale_cookie)
+                                else:
+                                    hdrs["Set-Cookie"] = [prev,
+                                                          set_locale_cookie]
+                            self._send(result[2], result[0], result[1], hdrs)
                         else:
-                            self._send(200, result[0], result[1])
+                            self._send(200, result[0], result[1],
+                                       extra_headers=({"Set-Cookie": set_locale_cookie}
+                                                      if set_locale_cookie else None))
                     else:
-                        self._send(200, result)
+                        self._send(200, result,
+                                   extra_headers=({"Set-Cookie": set_locale_cookie}
+                                                  if set_locale_cookie else None))
                     return
             raise ApiError(404, "unknown route — see GET / for the map")
         except ApiError as e:
-            self._send(e.status, {"error": e.message})
+            msg = i18n.translate_api_message(e.message, locale,
+                                             key=e.i18n_key,
+                                             params=e.i18n_params)
+            self._send(e.status, {"error": msg})
         except Exception as e:  # never leak a stack to players
             self.log_message("ERROR %s %s: %r", method, self.path, e)
-            self._send(500, {"error": "internal hiccup — try again"})
+            self._send(500, {"error": i18n.t("err.k999", locale)})
+            return
 
     # -- handlers ------------------------------------------------
     def _authed(self, body, qs):
@@ -5293,13 +5339,24 @@ class Handler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _sso_t(key, locale="en", **kw):
-        """SSO UI string with {placeholder} substitution (HTML-escaped)."""
+        """SSO UI string via the arena i18n system (sso.k001-k008 live in
+        i18n/{en,zh,hi}.json), with {placeholder} substitution (HTML-escaped).
+
+        Falls back to the self-contained table below if the i18n catalogs
+        are ever unavailable — the committed SSO code keeps working with
+        or without the in-flight i18n plumbing.
+        """
+        ev = {k: (str(v).replace("&", "&amp;").replace("<", "&lt;")
+                  .replace(">", "&gt;").replace('"', "&quot;"))
+              for k, v in kw.items()}
+        try:
+            return i18n.t(key, locale=locale, **ev)
+        except Exception:
+            pass
         table = Handler._SSO_STRINGS.get(locale) or Handler._SSO_STRINGS["en"]
         s = table.get(key) or Handler._SSO_STRINGS["en"].get(key, key)
-        for k, v in kw.items():
-            ev = (str(v).replace("&", "&amp;").replace("<", "&lt;")
-                  .replace(">", "&gt;").replace('"', "&quot;"))
-            s = s.replace("{" + k + "}", ev)
+        for k, v in ev.items():
+            s = s.replace("{" + k + "}", v)
         return s
 
     def _request_cookies(self):
@@ -5662,9 +5719,9 @@ class Handler(BaseHTTPRequestHandler):
             "game_staked": info["staked"],
             "stake_tx": receipt.get("tx_hash", ""),
             "network": x402pay.NETWORK,
-            "note": ("both players staked — game is live for $1.90 to the winner"
+            "note": (i18n.t("api.k010")
                      if info["staked"] else
-                     "stake recorded — game goes live when both players stake"),
+                     i18n.t("api.k011")),
         }
         return out, "application/json", 200, resp_headers
 
@@ -5841,8 +5898,7 @@ class Handler(BaseHTTPRequestHandler):
             "pot_usd": info["pot_usd"],
             "target_usd": info["target_usd"],
             "tournament_status": info["status"],
-            "note": ("pot is $%s of the $50 target — winner takes 90%%"
-                     % info["pot_usd"]),
+            "note": i18n.t("api.k012", pot=info["pot_usd"]),
         }
         return out, "application/json", 200, resp_headers
 
