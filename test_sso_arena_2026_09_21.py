@@ -236,6 +236,15 @@ def main():
     check("sso_identities table created", "sso_identities" in tbls)
 
     # ---- /auth/login ----
+    # Fail closed when the session secret is not configured (same as the
+    # Playbook and Trustline clients): no login, no ephemeral sessions.
+    saved_secret = os.environ.pop("ARENA_SESSION_SECRET", None)
+    try:
+        status_nc, _, _ = c.get("/auth/login")
+        check("login without secret -> 503", status_nc == 503, str(status_nc))
+    finally:
+        if saved_secret is not None:
+            os.environ["ARENA_SESSION_SECRET"] = saved_secret
     status, headers, body = c.get("/auth/login")
     loc = headers.get("Location", "")
     check("login -> 302 to provider authorize",
@@ -422,8 +431,10 @@ def main():
     check("landing has orb anchor", "data-muse-orb-anchor" in html)
     check("landing includes orb script",
           '<script src="/static/js/muse-orb.js" defer>' in html)
-    status, _, body = c12.get("/?locale=zh")
-    check("zh login string", "使用 MuseFM 登录" in body.decode())
+    # zh strings come from the self-contained SSO table (no dependency
+    # on the i18n project's query-param locale plumbing).
+    check("zh login string",
+          "使用 MuseFM 登录" in appmod.Handler._sso_t("sso.k001", "zh"))
     # logged-in slot shows the chip (fresh full login on c, which logged out)
     status, headers, _ = c.get("/auth/login")
     ql = urllib.parse.parse_qs(urllib.parse.urlparse(headers["Location"]).query)

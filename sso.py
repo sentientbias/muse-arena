@@ -64,6 +64,16 @@ def _secret():
         return _EPHEMERAL_SECRET
 
 
+def configured():
+    """True when ARENA_SESSION_SECRET is set (persistent SSO sessions).
+
+    The /auth/* entry points fail closed without it — same as the
+    Playbook and Trustline clients — instead of minting sessions that
+    would silently die on the next restart.
+    """
+    return bool(os.environ.get("ARENA_SESSION_SECRET", ""))
+
+
 def b64u_encode(b):
     return base64.urlsafe_b64encode(b).rstrip(b"=").decode("ascii")
 

@@ -5254,6 +5254,54 @@ class Handler(BaseHTTPRequestHandler):
         return NETWORK_HTML.encode("utf-8"), "text/html"
 
     # -- family global login (MuseFM SSO client, v2.12) ----------------
+    # NOTE (v2.12 self-containment fix): the SSO UI strings live in this
+    # local table so the committed SSO code runs with or without the
+    # in-flight i18n project (i18n.py + i18n/*.json are uncommitted).
+    # When the i18n project lands, _sso_t() can delegate to i18n.t().
+    _SSO_STRINGS = {
+        "en": {
+            "sso.k001": "Sign in with MuseFM",
+            "sso.k002": "Signed in as @{handle}",
+            "sso.k003": "Log out",
+            "sso.k004": "Signing you in\u2026",
+            "sso.k005": "Sign-in failed",
+            "sso.k006": "The sign-in request expired or was already used. Please try again.",
+            "sso.k007": "Sign-in was cancelled.",
+            "sso.k008": "Something went wrong signing you in. Please try again.",
+        },
+        "zh": {
+            "sso.k001": "\u4f7f\u7528 MuseFM \u767b\u5f55",
+            "sso.k002": "\u5df2\u767b\u5f55\u4e3a @{handle}",
+            "sso.k003": "\u9000\u51fa\u767b\u5f55",
+            "sso.k004": "\u6b63\u5728\u4e3a\u60a8\u767b\u5f55\u2026",
+            "sso.k005": "\u767b\u5f55\u5931\u8d25",
+            "sso.k006": "\u767b\u5f55\u8bf7\u6c42\u5df2\u8fc7\u671f\u6216\u5df2\u88ab\u4f7f\u7528\uff0c\u8bf7\u91cd\u8bd5\u3002",
+            "sso.k007": "\u5df2\u53d6\u6d88\u767b\u5f55\u3002",
+            "sso.k008": "\u767b\u5f55\u65f6\u51fa\u73b0\u95ee\u9898\uff0c\u8bf7\u91cd\u8bd5\u3002",
+        },
+        "hi": {
+            "sso.k001": "MuseFM \u0938\u0947 \u0938\u093e\u0907\u0928 \u0907\u0928 \u0915\u0930\u0947\u0902",
+            "sso.k002": "@{handle} \u0915\u0947 \u0930\u0942\u092a \u092e\u0947\u0902 \u0938\u093e\u0907\u0928 \u0907\u0928",
+            "sso.k003": "\u0932\u0949\u0917 \u0906\u0909\u091f",
+            "sso.k004": "\u0906\u092a\u0915\u094b \u0938\u093e\u0907\u0928 \u0907\u0928 \u0915\u093f\u092f\u093e \u091c\u093e \u0930\u0939\u093e \u0939\u0948\u2026",
+            "sso.k005": "\u0938\u093e\u0907\u0928-\u0907\u0928 \u0935\u093f\u092b\u0932",
+            "sso.k006": "\u0938\u093e\u0907\u0928-\u0907\u0928 \u0905\u0928\u0941\u0930\u094b\u0927 \u0938\u092e\u093e\u092a\u094d\u0924 \u0939\u094b \u0917\u092f\u093e \u0939\u0948 \u092f\u093e \u092a\u0939\u0932\u0947 \u0939\u0940 \u0909\u092a\u092f\u094b\u0917 \u0915\u093f\u092f\u093e \u091c\u093e \u091a\u0941\u0915\u093e \u0939\u0948\u0964 \u0915\u0943\u092a\u092f\u093e \u092a\u0941\u0928\u0903 \u092a\u094d\u0930\u092f\u093e\u0938 \u0915\u0930\u0947\u0902\u0964",
+            "sso.k007": "\u0938\u093e\u0907\u0928-\u0907\u0928 \u0930\u0926\u094d\u0926 \u0915\u0930 \u0926\u093f\u092f\u093e \u0917\u092f\u093e\u0964",
+            "sso.k008": "\u0938\u093e\u0907\u0928 \u0907\u0928 \u0915\u0930\u0924\u0947 \u0938\u092e\u092f \u0915\u0941\u091b \u0917\u0932\u0924 \u0939\u094b \u0917\u092f\u093e\u0964 \u0915\u0943\u092a\u092f\u093e \u092a\u0941\u0928\u0903 \u092a\u094d\u0930\u092f\u093e\u0938 \u0915\u0930\u0947\u0902\u0964",
+        },
+    }
+
+    @staticmethod
+    def _sso_t(key, locale="en", **kw):
+        """SSO UI string with {placeholder} substitution (HTML-escaped)."""
+        table = Handler._SSO_STRINGS.get(locale) or Handler._SSO_STRINGS["en"]
+        s = table.get(key) or Handler._SSO_STRINGS["en"].get(key, key)
+        for k, v in kw.items():
+            ev = (str(v).replace("&", "&amp;").replace("<", "&lt;")
+                  .replace(">", "&gt;").replace('"', "&quot;"))
+            s = s.replace("{" + k + "}", ev)
+        return s
+
     def _request_cookies(self):
         """Parse the request Cookie header into a dict (stdlib only)."""
         from http.cookies import SimpleCookie
@@ -5276,6 +5324,9 @@ class Handler(BaseHTTPRequestHandler):
     def h_auth_login(self, body, qs):
         """Start SSO: mint PKCE + state, stash state in a signed cookie,
         redirect to the MuseFM provider's consent screen."""
+        if not sso.configured():
+            return (b"Sign-in is not configured on this server yet.",
+                    "text/plain", 503, {})
         if not sso.throttle_check(self._client_ip()):
             raise ApiError(429, "too many sign-in attempts — slow down")
         verifier, challenge = sso.pkce_pair()
@@ -5296,8 +5347,8 @@ class Handler(BaseHTTPRequestHandler):
         """Localized 400 page. Must be a 4-tuple: _route only honors the
         status on (body, ctype, status, headers) results."""
         locale = getattr(self, "_locale", "en")
-        title = i18n.t("sso.k005", locale)
-        msg = i18n.t(key, locale)
+        title = self._sso_t("sso.k005", locale)
+        msg = self._sso_t(key, locale)
         html = ("<!DOCTYPE html><html><head><meta charset='utf-8'>"
                 "<meta name='viewport' content='width=device-width,initial-scale=1'>"
                 "<title>" + title + "</title></head>"
@@ -5312,6 +5363,9 @@ class Handler(BaseHTTPRequestHandler):
     def h_auth_callback(self, body, qs):
         """Provider redirect target: verify state, exchange the code,
         verify the ID token, link the identity, set the local session."""
+        if not sso.configured():
+            return (b"Sign-in is not configured on this server yet.",
+                    "text/plain", 503, {})
         if not sso.throttle_check(self._client_ip()):
             raise ApiError(429, "too many sign-in attempts — slow down")
         err = (qs.get("error", [None])[0])
@@ -5340,22 +5394,24 @@ class Handler(BaseHTTPRequestHandler):
         # Interstitial: hand the arena player token to the browser's
         # existing localStorage session, then land on /play. The game's
         # wallet/token flow downstream is completely unchanged.
+        locale = getattr(self, "_locale", "en")
+        signing_in = self._sso_t("sso.k004", locale)
+        mh_json = json.dumps({"wallet": player.get("wallet") or "",
+                              "token": player["token"],
+                              "name": player["name"]}).replace("</", "<\\/")
         interstitial = (
             "<!DOCTYPE html><html><head><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-            "<title>{{t:sso.k004}}</title></head>"
+            "<title>" + signing_in + "</title></head>"
             "<body style='background:#141d33;color:#fdf6e3;font-family:sans-serif;"
             "display:flex;align-items:center;justify-content:center;min-height:90vh'>"
-            "<p>{{t:sso.k004}}</p>"
+            "<p>" + signing_in + "</p>"
             "<script>(function(){try{"
-            "var mh=%s;"
+            "var mh=" + mh_json + ";"
             "localStorage.setItem('ma_human',JSON.stringify(mh));"
             "}catch(e){}"
             "location.replace('/play');})();</script>"
-            "</body></html>"
-            % json.dumps({"wallet": player.get("wallet") or "",
-                          "token": player["token"],
-                          "name": player["name"]}))
+            "</body></html>")
         return interstitial.encode("utf-8"), "text/html", 200, headers
 
     def h_auth_logout(self, body, qs):
@@ -5370,11 +5426,11 @@ class Handler(BaseHTTPRequestHandler):
         if sess:
             return (
                 '<span class="ma-sso-chip">%s</span>'
-                % i18n.t("sso.k002", locale, handle=sess.get("handle", "?"))
+                % self._sso_t("sso.k002", locale, handle=sess.get("handle", "?"))
                 + ' <a class="ma-sso-link" href="/auth/logout">%s</a>'
-                % i18n.t("sso.k003", locale))
+                % self._sso_t("sso.k003", locale))
         return ('<a class="btn btn-ghost btn-quiet" href="/auth/login">%s</a>'
-                % i18n.t("sso.k001", locale))
+                % self._sso_t("sso.k001", locale))
 
     def h_auth_me(self, body, qs):
         """JSON: current SSO session + linked arena player (if any)."""
