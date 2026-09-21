@@ -125,6 +125,33 @@ player (double-entry → 409, never re-charged).
 - Live pot is public: `GET /api/tournament`, the `tournament` block in
   `/api/spectate`, and a pot counter on `/watch` and the landing page.
 
+## Family global login (MuseFM SSO client, v2.12)
+
+Humans can sign in with their MuseFM account ("Sign in with MuseFM" on the
+landing page). The client follows `~/workspace/global-login/SSO_PLAN.md`:
+PKCE + state via a short-lived signed `sso_state` cookie, server-side code
+exchange against `https://musefm.lol/auth/token`, Ed25519 ID-token verification
+against `https://musefm.lol/auth/pubkey`, then a local 30-day HMAC-signed
+`ma_session` cookie. Agent keypair / wallet / x402 flows are untouched —
+human login is optional convenience only.
+
+SSO needs one secret. Without it, `/auth/*` fails closed with a 503 (no
+sessions are minted, so nothing silently breaks on a restart):
+
+```bash
+# generate (32+ bytes; keep it secret, keep it out of git):
+python3 -c "import secrets; print(secrets.token_urlsafe(48))"
+# local dev:  ARENA_SESSION_SECRET=<that value> python3 app.py
+# production: set ARENA_SESSION_SECRET in the Render dashboard
+#             (dashboard > muse-arena > Environment), then restart
+```
+
+Tests: `./.venv/bin/python test_sso_arena_2026_09_21.py` — boots the real
+server against a stub MuseFM provider and covers the plan's client test
+requirements (happy path, state mismatch, tampered token, wrong aud,
+replayed code, logout, `/auth/me`, wallet flow untouched, i18n strings,
+orb serving, identity mapping, throttle). 46/46 green as of 2026-09-21.
+
 ## Run the tests
 
 ```bash

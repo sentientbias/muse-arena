@@ -1,4 +1,6 @@
 psycopg2-binary>=2.9
+# v2.12: Ed25519 verification of MuseFM SSO identity tokens
+cryptography
 # Staked matches (v1.4): x402 v2 SDK for $1 USDC stake payments (EIP-3009,
 # Base mainnet) + CDP facilitator auth for mainnet settlement.
 x402[evm,httpx]
